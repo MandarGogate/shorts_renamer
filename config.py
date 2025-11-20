@@ -7,7 +7,7 @@ If you want to change defaults, edit `DEFAULT_SETTINGS` directly.
 
 DEFAULT_SETTINGS = {
     'video_dir': '/Users/mandargogate/Work/CC/036ToEdit',
-    'audio_dir': '/Users/mandargogate/Work/CC/06uploaded',
+    'audio_dir': '/Users/mandargogate/Work/CC/TrendingMusic',
     'fixed_tags': '#shorts',
     'pool_tags': '#fyp #viral #trending #foryou #reels',
     'preserve_exact_titles': True,
