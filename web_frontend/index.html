@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ShortsSync - AI-Powered Video Organizer</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <div class="logo">
+                    <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+                        <rect width="40" height="40" rx="8" fill="#0066cc"/>
+                        <path d="M12 20L18 14L24 20L30 14" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M12 26L18 20L24 26L30 20" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <div>
+                        <h1>ShortsSync</h1>
+                        <p class="tagline">AI-Powered Audio Fingerprinting</p>
+                    </div>
+                </div>
+                <div class="header-status">
+                    <div class="status-indicator" id="connectionStatus">
+                        <span class="status-dot"></span>
+                        <span class="status-text">Connecting...</span>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Step 1: Configuration -->
+            <section class="card">
+                <div class="card-header">
+                    <div class="step-number">1</div>
+                    <div>
+                        <h2>Configuration</h2>
+                        <p>Set your directories and preferences</p>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="videoDir">Video Source Directory</label>
+                            <input type="text" id="videoDir" placeholder="/path/to/videos" />
+                            <small>Directory containing videos to be renamed</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="audioDir">Reference Audio Directory</label>
+                            <input type="text" id="audioDir" placeholder="/path/to/reference/audio" />
+                            <small>Directory with reference audio files (recursive scan)</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="fixedTags">Fixed Tags</label>
+                            <input type="text" id="fixedTags" placeholder="#shorts #viral" />
+                            <small>Tags always added to filenames</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="poolTags">Random Tag Pool</label>
+                            <input type="text" id="poolTags" placeholder="#fyp #trending #foryou #reels" />
+                            <small>Random selection from these tags</small>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="moveFiles" />
+                            <label for="moveFiles">Move renamed files to "_Ready" folder</label>
+                        </div>
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="preserveExact" />
+                            <label for="preserveExact">Preserve exact reference names (no tags)</label>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Step 2: Index Reference Audio -->
+            <section class="card">
+                <div class="card-header">
+                    <div class="step-number">2</div>
+                    <div>
+                        <h2>Index Reference Audio</h2>
+                        <p>Build fingerprint database from reference audio</p>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="action-section">
+                        <button class="btn btn-primary" id="btnIndex">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                <path d="M9 18l6-6-6-6" stroke-width="2" stroke-linecap="round"/>
+                            </svg>
+                            Start Indexing
+                        </button>
+                        <div class="stats-group" id="indexStats">
+                            <div class="stat-item">
+                                <span class="stat-label">Indexed Files:</span>
+                                <span class="stat-value" id="indexedCount">0</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Step 3: Match Videos -->
+            <section class="card">
+                <div class="card-header">
+                    <div class="step-number">3</div>
+                    <div>
+                        <h2>Match Videos</h2>
+                        <p>Find audio matches for your videos</p>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="action-section">
+                        <button class="btn btn-primary" id="btnMatch" disabled>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                <circle cx="11" cy="11" r="8" stroke-width="2"/>
+                                <path d="M21 21l-4.35-4.35" stroke-width="2" stroke-linecap="round"/>
+                            </svg>
+                            Start Matching
+                        </button>
+                        <div class="stats-group" id="matchStats">
+                            <div class="stat-item">
+                                <span class="stat-label">Matches Found:</span>
+                                <span class="stat-value" id="matchCount">0</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Progress Section -->
+            <section class="card" id="progressCard" style="display: none;">
+                <div class="card-header">
+                    <div class="step-number">
+                        <svg class="spinner" width="24" height="24" viewBox="0 0 24 24">
+                            <circle cx="12" cy="12" r="10" stroke="#0066cc" stroke-width="3" fill="none" stroke-dasharray="60" stroke-dashoffset="20"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h2>Processing</h2>
+                        <p id="progressMessage">Working...</p>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+                    </div>
+                    <div class="progress-text" id="progressText">0 / 0</div>
+                </div>
+            </section>
+
+            <!-- Step 4: Results & Rename -->
+            <section class="card" id="resultsCard" style="display: none;">
+                <div class="card-header">
+                    <div class="step-number">4</div>
+                    <div>
+                        <h2>Results & Rename</h2>
+                        <p>Review matches and commit changes</p>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="action-section" style="margin-bottom: 20px;">
+                        <button class="btn btn-success" id="btnRename">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                <polyline points="20 6 9 17 4 12" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                            Commit Rename
+                        </button>
+                        <button class="btn btn-secondary" id="btnClear">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6" stroke-width="2" stroke-linecap="round"/>
+                            </svg>
+                            Clear Results
+                        </button>
+                    </div>
+                    <div class="results-container" id="resultsContainer">
+                        <!-- Results will be populated here -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- Activity Log -->
+            <section class="card">
+                <div class="card-header">
+                    <div>
+                        <h2>Activity Log</h2>
+                        <p>Real-time processing updates</p>
+                    </div>
+                    <button class="btn btn-text" id="btnClearLog">Clear Log</button>
+                </div>
+                <div class="card-body">
+                    <div class="log-container" id="logContainer">
+                        <div class="log-entry log-info">
+                            <span class="log-time">[--:--:--]</span>
+                            <span class="log-message">Welcome to ShortsSync Web Interface</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>&copy; 2025 ShortsSync - AI-Powered Audio Fingerprinting</p>
+            <p>
+                <a href="https://github.com/MandarGogate/shorts_renamer" target="_blank">GitHub</a>
+                <span>•</span>
+                <a href="#" id="aboutLink">About</a>
+            </p>
+        </footer>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
