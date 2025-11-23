@@ -532,9 +532,9 @@ if __name__ == '__main__':
     print("=" * 60)
     print("ShortsSync Web Backend")
     print("=" * 60)
-    print(f"Starting server on http://localhost:5000")
-    print(f"Web UI: http://localhost:5000")
-    print(f"API: http://localhost:5000/api/*")
+    print(f"Starting server on http://localhost:5001")
+    print(f"Web UI: http://localhost:5001")
+    print(f"API: http://localhost:5001/api/*")
     print("=" * 60)
 
     # Create necessary directories
@@ -548,4 +548,4 @@ if __name__ == '__main__':
         print("Install with: brew install chromaprint (macOS) or apt install libchromaprint-tools (Linux)")
 
     # Start server
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True, allow_unsafe_werkzeug=True)
+    socketio.run(app, host='0.0.0.0', port=5001, debug=True, allow_unsafe_werkzeug=True)

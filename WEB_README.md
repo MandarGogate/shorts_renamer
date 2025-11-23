@@ -72,8 +72,10 @@ The web interface provides full ShortsSync functionality through a modern, respo
 
 4. **Open browser**
    ```
-   http://localhost:5000
+   http://localhost:5001
    ```
+
+   **Note:** Port 5001 is used to avoid conflicts with AirPlay on macOS (which uses port 5000)
 
 ---
 
@@ -255,7 +257,7 @@ To access from other devices on your network:
 
 3. **Access from other device**
    ```
-   http://192.168.1.XXX:5000
+   http://192.168.1.XXX:5001
    ```
 
 ### Security Warning
@@ -290,14 +292,14 @@ RUN pip install --no-cache-dir -r requirements_web.txt
 
 COPY . .
 
-EXPOSE 5000
+EXPOSE 5001
 CMD ["python", "web_backend.py"]
 ```
 
 Build and run:
 ```bash
 docker build -t shortssync-web .
-docker run -p 5000:5000 -v /path/to/data:/data shortssync-web
+docker run -p 5001:5001 -v /path/to/data:/data shortssync-web
 ```
 
 ### Cloud Deployment (AWS, GCP, Azure)
@@ -402,7 +404,7 @@ sudo apt install libchromaprint-tools
 
 1. Check if server is running:
    ```bash
-   curl http://localhost:5000/api/health
+   curl http://localhost:5001/api/health
    ```
 
 2. Check firewall settings
