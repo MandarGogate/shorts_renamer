@@ -4,6 +4,7 @@
 // Global state
 let socket = null;
 let matches = [];
+let lastTask = null;  // Track last task for cleanup when it completes
 let config = {
     video_dir: '',
     audio_dir: '',
@@ -286,6 +287,11 @@ function resetRenameButton() {
 function handleStatusUpdate(data) {
     const { is_processing, current_task, progress, total, message } = data;
 
+    // Track current task for cleanup
+    if (current_task) {
+        lastTask = current_task;
+    }
+
     // Update progress card
     const progressCard = document.getElementById('progressCard');
     if (is_processing) {
@@ -314,24 +320,21 @@ function handleStatusUpdate(data) {
         addLog(message, logType);
     }
 
-    // Task-specific updates
-    if (current_task === 'indexing') {
-        if (!is_processing) {
+    // Task-specific cleanup when processing completes
+    if (!is_processing && lastTask) {
+        if (lastTask === 'indexing') {
             resetIndexButton();
             fetchReferenceCount();
             // Enable match button after successful indexing
             document.getElementById('btnMatch').disabled = false;
-        }
-    } else if (current_task === 'matching') {
-        if (!is_processing) {
+        } else if (lastTask === 'matching') {
             resetMatchButton();
             fetchMatches();
-        }
-    } else if (current_task === 'renaming') {
-        if (!is_processing) {
+        } else if (lastTask === 'renaming') {
             resetRenameButton();
             clearResults();
         }
+        lastTask = null;  // Clear after handling
     }
 }
 

@@ -271,6 +271,8 @@ def index_reference_audio():
             finally:
                 processing_status['is_processing'] = False
                 processing_status['current_task'] = None
+                # Send final status update to notify frontend that processing is complete
+                socketio.emit('status_update', processing_status)
 
     thread = threading.Thread(target=index_task)
     thread.daemon = True
@@ -421,6 +423,8 @@ def match_videos():
             finally:
                 processing_status['is_processing'] = False
                 processing_status['current_task'] = None
+                # Send final status update to notify frontend that processing is complete
+                socketio.emit('status_update', processing_status)
 
     thread = threading.Thread(target=match_task)
     thread.daemon = True
@@ -503,6 +507,8 @@ def rename_videos():
             finally:
                 processing_status['is_processing'] = False
                 processing_status['current_task'] = None
+                # Send final status update to notify frontend that processing is complete
+                socketio.emit('status_update', processing_status)
 
     thread = threading.Thread(target=rename_task)
     thread.daemon = True
