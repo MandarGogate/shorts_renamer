@@ -204,6 +204,25 @@ body {
     box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
 }
 
+.form-group select,
+.form-select {
+    padding: 12px 16px;
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: inherit;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    background: var(--bg-primary);
+    cursor: pointer;
+}
+
+.form-group select:focus,
+.form-select:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
+}
+
 .form-group small {
     font-size: 12px;
     color: var(--text-secondary);

@@ -27,6 +27,12 @@ try:
 except ImportError:
     from moviepy.editor import VideoFileClip
 
+try:
+    import yt_dlp
+    YT_DLP_AVAILABLE = True
+except ImportError:
+    YT_DLP_AVAILABLE = False
+
 import config
 
 # ==================== Configuration ====================
@@ -520,6 +526,97 @@ def rename_videos():
 def get_status():
     """Get current processing status."""
     return jsonify(processing_status)
+
+@app.route('/api/download', methods=['POST'])
+def download_video():
+    """Download video from URL using yt-dlp."""
+    global processing_status
+
+    if not YT_DLP_AVAILABLE:
+        return jsonify({'error': 'yt-dlp not installed. Run: pip install yt-dlp'}), 400
+
+    if processing_status['is_processing']:
+        return jsonify({'error': 'Processing already in progress'}), 409
+
+    data = request.json
+    url = data.get('url')
+    output_dir = data.get('output_dir')
+    format_type = data.get('format', 'video')  # 'video' or 'audio'
+
+    if not url:
+        return jsonify({'error': 'URL is required'}), 400
+
+    if not output_dir:
+        output_dir = os.path.join(os.getcwd(), 'downloads')
+
+    # Start download in background thread
+    def download_task():
+        global processing_status
+
+        with processing_lock:
+            processing_status['is_processing'] = True
+            processing_status['current_task'] = 'downloading'
+
+            try:
+                os.makedirs(output_dir, exist_ok=True)
+                emit_status(f"Starting download from URL...")
+
+                # Configure yt-dlp options
+                ydl_opts = {
+                    'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
+                    'progress_hooks': [lambda d: download_progress_hook(d)],
+                    'quiet': True,
+                    'no_warnings': True,
+                }
+
+                if format_type == 'audio':
+                    ydl_opts.update({
+                        'format': 'bestaudio/best',
+                        'postprocessors': [{
+                            'key': 'FFmpegExtractAudio',
+                            'preferredcodec': 'mp3',
+                            'preferredquality': '192',
+                        }],
+                    })
+                else:
+                    # Download best video with height <= 1080p
+                    ydl_opts['format'] = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'
+
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    title = info.get('title', 'Unknown')
+                    emit_status(f"Downloading: {title}")
+
+                    ydl.download([url])
+
+                emit_status(f"✅ Download complete: {title}")
+
+            except Exception as e:
+                emit_status(f"Error during download: {str(e)}")
+            finally:
+                processing_status['is_processing'] = False
+                processing_status['current_task'] = None
+                socketio.emit('status_update', processing_status)
+
+    def download_progress_hook(d):
+        """Hook for download progress updates."""
+        if d['status'] == 'downloading':
+            try:
+                downloaded = d.get('downloaded_bytes', 0)
+                total = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
+                if total > 0:
+                    progress = int((downloaded / total) * 100)
+                    emit_status(f"Downloading: {progress}%", progress, 100)
+            except:
+                pass
+        elif d['status'] == 'finished':
+            emit_status("Download finished, processing...")
+
+    thread = threading.Thread(target=download_task)
+    thread.daemon = True
+    thread.start()
+
+    return jsonify({'success': True, 'message': 'Download started'})
 
 # ==================== WebSocket Events ====================
 

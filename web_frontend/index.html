@@ -34,6 +34,51 @@
 
         <!-- Main Content -->
         <main class="main-content">
+            <!-- Download Section -->
+            <section class="card">
+                <div class="card-header">
+                    <div class="step-number">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h2>Download Videos</h2>
+                        <p>Download videos from YouTube, TikTok, Instagram, etc.</p>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="form-grid">
+                        <div class="form-group" style="grid-column: 1 / -1;">
+                            <label for="downloadUrl">Video URL</label>
+                            <input type="text" id="downloadUrl" placeholder="https://youtube.com/watch?v=... or https://tiktok.com/@user/video/..." />
+                            <small>Supports YouTube, TikTok, Instagram, Twitter, and many more platforms</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="downloadOutputDir">Download Directory</label>
+                            <input type="text" id="downloadOutputDir" placeholder="./downloads" />
+                            <small>Where to save downloaded files</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="downloadFormat">Format</label>
+                            <select id="downloadFormat" class="form-select">
+                                <option value="video">Video (MP4)</option>
+                                <option value="audio">Audio Only (MP3)</option>
+                            </select>
+                            <small>Choose video or audio-only download</small>
+                        </div>
+                    </div>
+                    <div class="action-section">
+                        <button class="btn btn-primary" id="btnDownload">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke-width="2"/>
+                            </svg>
+                            Start Download
+                        </button>
+                    </div>
+                </div>
+            </section>
+
             <!-- Step 1: Configuration -->
             <section class="card">
                 <div class="card-header">

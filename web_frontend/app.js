@@ -80,6 +80,7 @@ function attachEventListeners() {
     document.getElementById('preserveExact').addEventListener('change', saveConfig);
 
     // Action buttons
+    document.getElementById('btnDownload').addEventListener('click', startDownload);
     document.getElementById('btnIndex').addEventListener('click', startIndexing);
     document.getElementById('btnMatch').addEventListener('click', startMatching);
     document.getElementById('btnRename').addEventListener('click', startRenaming);
@@ -148,6 +149,53 @@ function checkHealth() {
         .catch(err => {
             addLog('Health check failed: ' + err.message, 'error');
         });
+}
+
+// ==================== Download ====================
+function startDownload() {
+    const url = document.getElementById('downloadUrl').value.trim();
+    const outputDir = document.getElementById('downloadOutputDir').value.trim();
+    const format = document.getElementById('downloadFormat').value;
+
+    if (!url) {
+        alert('Please enter a video URL');
+        return;
+    }
+
+    const btnDownload = document.getElementById('btnDownload');
+    btnDownload.disabled = true;
+    btnDownload.innerHTML = '<svg class="spinner" width="20" height="20" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="60" stroke-dashoffset="20"/></svg> Downloading...';
+
+    addLog('Starting download...', 'info');
+
+    fetch('/api/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            url: url,
+            output_dir: outputDir || './downloads',
+            format: format
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            addLog('Download started successfully', 'success');
+        } else {
+            addLog('Download failed: ' + (data.error || 'Unknown error'), 'error');
+            resetDownloadButton();
+        }
+    })
+    .catch(err => {
+        addLog('Error starting download: ' + err.message, 'error');
+        resetDownloadButton();
+    });
+}
+
+function resetDownloadButton() {
+    const btnDownload = document.getElementById('btnDownload');
+    btnDownload.disabled = false;
+    btnDownload.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke-width="2"/></svg> Start Download';
 }
 
 // ==================== Indexing ====================
@@ -322,7 +370,9 @@ function handleStatusUpdate(data) {
 
     // Task-specific cleanup when processing completes
     if (!is_processing && lastTask) {
-        if (lastTask === 'indexing') {
+        if (lastTask === 'downloading') {
+            resetDownloadButton();
+        } else if (lastTask === 'indexing') {
             resetIndexButton();
             fetchReferenceCount();
             // Enable match button after successful indexing
