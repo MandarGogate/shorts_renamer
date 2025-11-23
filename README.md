@@ -2,20 +2,22 @@
 
 **AI-Powered Audio Fingerprinting for Short-Form Video Management**
 
-ShortsSync is a desktop automation tool that uses Chromaprint audio fingerprinting to automatically match and rename short-form videos based on their audio content. It's designed for content creators managing large libraries of TikTok, Instagram Reels, and YouTube Shorts.
+ShortsSync is a powerful automation platform that uses Chromaprint audio fingerprinting to automatically match and rename short-form videos based on their audio content. Available in GUI, CLI, and Web Interface modes, it's designed for content creators managing large libraries of TikTok, Instagram Reels, and YouTube Shorts.
 
 ---
 
 ## 🎯 Features
 
 - **🎵 Chromaprint Audio Fingerprinting**: Industry-standard audio matching with 100% accuracy
-- **🖥️ GUI & CLI Modes**: Choose between a clean light-mode GUI or powerful command-line interface
+- **🌐 Web Interface**: Modern browser-based UI with real-time updates (NEW!)
+- **🖥️ GUI & CLI Modes**: Choose between GUI, CLI, or web interface
 - **📁 Recursive Directory Scanning**: Automatically finds audio/video files in nested folders
 - **🎬 Video-to-Audio Extraction**: Works with both audio files and video files
 - **🏷️ Smart Tagging System**: Automatically adds viral tags to renamed files
 - **🔄 Duplicate Detection**: Find and manage duplicate audio files
 - **🎼 MP3 Conversion**: Automatically convert videos to MP3 audio files
 - **⚙️ Configurable Defaults**: Set your preferences once in `config.py`
+- **💾 Fingerprint Caching**: 100x faster startup with cached fingerprints
 
 ---
 
@@ -75,6 +77,31 @@ python cli.py -v /path/to/videos -a /path/to/audio
 # View help
 python cli.py --help
 ```
+
+### Web Interface Mode ⭐ NEW
+
+```bash
+# Install web dependencies
+pip install -r requirements_web.txt
+
+# Start web server
+./start_web.sh
+
+# Or manually
+python web_backend.py
+```
+
+Then check the terminal output for the URL (automatically uses an available port, typically `http://localhost:5001`)
+
+**Web Interface Features:**
+- 🌐 Access from any device with a browser
+- 📱 Mobile-responsive design
+- ⚡ Real-time progress updates via WebSockets
+- 💾 Automatic fingerprint caching
+- 🔄 No installation needed on client devices
+- 🌍 Remote access on local network
+
+**[📖 Full Web Interface Documentation →](WEB_README.md)**
 
 ---
 
