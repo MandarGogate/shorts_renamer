@@ -23,7 +23,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ==================== WebSocket Connection ====================
 function initializeSocket() {
-    socket = io('http://localhost:5001', {
+    // Connect to the same host and port that served this page
+    const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
+    const host = window.location.hostname;
+    const port = window.location.port || (protocol === 'https:' ? '443' : '80');
+    const serverUrl = `${protocol}//${host}:${port}`;
+
+    socket = io(serverUrl, {
         transports: ['websocket', 'polling']
     });
 

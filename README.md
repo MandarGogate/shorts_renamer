@@ -91,7 +91,7 @@ pip install -r requirements_web.txt
 python web_backend.py
 ```
 
-Then open your browser to `http://localhost:5001`
+Then check the terminal output for the URL (automatically uses an available port, typically `http://localhost:5001`)
 
 **Web Interface Features:**
 - 🌐 Access from any device with a browser

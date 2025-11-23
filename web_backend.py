@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import threading
 import time
+import socket
 from datetime import datetime
 from pathlib import Path
 import secrets
@@ -69,7 +70,8 @@ def emit_status(message, progress=None, total=None):
     if total is not None:
         processing_status['total'] = total
 
-    socketio.emit('status_update', processing_status, broadcast=True)
+    # Emit to all connected clients (no 'broadcast' parameter needed)
+    socketio.emit('status_update', processing_status)
     print(f"[Status] {message}")
 
 def get_fingerprint(path, fpcalc_path):
@@ -526,15 +528,36 @@ def handle_disconnect():
     """Handle client disconnection."""
     print(f"Client disconnected")
 
+# ==================== Utility Functions ====================
+
+def find_available_port(start_port=5001, max_attempts=10):
+    """Find an available port starting from start_port."""
+    for port in range(start_port, start_port + max_attempts):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(('', port))
+                return port
+        except OSError:
+            continue
+    # Fallback: let the OS assign a random port
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('', 0))
+        return s.getsockname()[1]
+
 # ==================== Main ====================
 
 if __name__ == '__main__':
+    # Find available port
+    port = find_available_port(start_port=5001)
+
     print("=" * 60)
     print("ShortsSync Web Backend")
     print("=" * 60)
-    print(f"Starting server on http://localhost:5001")
-    print(f"Web UI: http://localhost:5001")
-    print(f"API: http://localhost:5001/api/*")
+    print(f"Starting server on http://localhost:{port}")
+    print(f"Web UI: http://localhost:{port}")
+    print(f"API: http://localhost:{port}/api/*")
+    if port != 5001:
+        print(f"\n⚠️  Note: Using port {port} (port 5001 was unavailable)")
     print("=" * 60)
 
     # Create necessary directories
@@ -548,4 +571,4 @@ if __name__ == '__main__':
         print("Install with: brew install chromaprint (macOS) or apt install libchromaprint-tools (Linux)")
 
     # Start server
-    socketio.run(app, host='0.0.0.0', port=5001, debug=True, allow_unsafe_werkzeug=True)
+    socketio.run(app, host='0.0.0.0', port=port, debug=True, allow_unsafe_werkzeug=True)

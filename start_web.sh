@@ -38,7 +38,7 @@ fi
 # Start server
 echo ""
 echo "Starting ShortsSync Web Server..."
-echo "Open your browser to: http://localhost:5001"
-echo "Note: Port 5001 is used to avoid conflicts with AirPlay on macOS"
+echo "The server will automatically find an available port (starting from 5001)"
+echo "Check the output below for the actual URL to open in your browser"
 echo ""
 python3 web_backend.py

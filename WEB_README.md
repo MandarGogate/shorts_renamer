@@ -71,11 +71,15 @@ The web interface provides full ShortsSync functionality through a modern, respo
    ```
 
 4. **Open browser**
+
+   The server will automatically find an available port (starting from 5001).
+   Check the terminal output for the actual URL, e.g.:
    ```
-   http://localhost:5001
+   Starting server on http://localhost:5001
+   Web UI: http://localhost:5001
    ```
 
-   **Note:** Port 5001 is used to avoid conflicts with AirPlay on macOS (which uses port 5000)
+   **Note:** The server automatically selects an available port to avoid conflicts with AirPlay (port 5000) and other services.
 
 ---
 
@@ -337,11 +341,13 @@ shorts_renamer/
 
 ### Customization
 
-**Change port:**
+**Change starting port:**
 ```python
-# web_backend.py, line ~600
-socketio.run(app, host='0.0.0.0', port=8080)
+# web_backend.py, in main block
+port = find_available_port(start_port=8080)  # Change start_port value
 ```
+
+The server automatically finds an available port, starting from the specified port.
 
 **Max upload size:**
 ```python
@@ -402,17 +408,14 @@ sudo apt install libchromaprint-tools
 
 ### "Connection error" in browser
 
-1. Check if server is running:
+1. Check if server is running (use the port shown in terminal output):
    ```bash
    curl http://localhost:5001/api/health
    ```
 
 2. Check firewall settings
 
-3. Try different port:
-   ```bash
-   python web_backend.py --port 8080
-   ```
+3. Verify the port in the terminal output where you started the server
 
 ### "No matches found"
 
