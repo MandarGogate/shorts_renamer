@@ -19,6 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeSocket();
     loadConfig();
     attachEventListeners();
+    initializeTabs();
     checkHealth();
 });
 
@@ -69,6 +70,25 @@ function updateConnectionStatus(connected) {
     }
 }
 
+// ==================== Tabs ====================
+function initializeTabs() {
+    const tabButtons = document.querySelectorAll('.tab-btn');
+
+    tabButtons.forEach(button => {
+        button.addEventListener('click', () => {
+            const targetTab = button.getAttribute('data-tab');
+
+            // Remove active class from all buttons and tabs
+            tabButtons.forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+
+            // Add active class to clicked button and target tab
+            button.classList.add('active');
+            document.getElementById(targetTab).classList.add('active');
+        });
+    });
+}
+
 // ==================== Event Listeners ====================
 function attachEventListeners() {
     // Configuration inputs
@@ -86,6 +106,7 @@ function attachEventListeners() {
     document.getElementById('btnRename').addEventListener('click', startRenaming);
     document.getElementById('btnClear').addEventListener('click', clearResults);
     document.getElementById('btnClearLog').addEventListener('click', clearLog);
+    document.getElementById('btnClearLog2')?.addEventListener('click', clearLog);
 }
 
 // ==================== Configuration Management ====================
@@ -475,14 +496,17 @@ function clearResults() {
 }
 
 function clearLog() {
-    const logContainer = document.getElementById('logContainer');
-    logContainer.innerHTML = '';
+    const logContainer1 = document.getElementById('logContainer');
+    const logContainer2 = document.getElementById('logContainer2');
+
+    if (logContainer1) logContainer1.innerHTML = '';
+    if (logContainer2) logContainer2.innerHTML = '';
+
     addLog('Log cleared', 'info');
 }
 
 // ==================== Logging ====================
 function addLog(message, type = 'info') {
-    const logContainer = document.getElementById('logContainer');
     const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false });
 
     const logEntry = document.createElement('div');
@@ -492,8 +516,19 @@ function addLog(message, type = 'info') {
         <span class="log-message">${escapeHtml(message)}</span>
     `;
 
-    logContainer.appendChild(logEntry);
-    logContainer.scrollTop = logContainer.scrollHeight;
+    // Add to both log containers (match tab and download tab)
+    const logContainer1 = document.getElementById('logContainer');
+    const logContainer2 = document.getElementById('logContainer2');
+
+    if (logContainer1) {
+        logContainer1.appendChild(logEntry.cloneNode(true));
+        logContainer1.scrollTop = logContainer1.scrollHeight;
+    }
+
+    if (logContainer2) {
+        logContainer2.appendChild(logEntry.cloneNode(true));
+        logContainer2.scrollTop = logContainer2.scrollHeight;
+    }
 }
 
 // ==================== Utility Functions ====================
