@@ -11,12 +11,46 @@ import numpy as np
 from moviepy import VideoFileClip
 import random
 import argparse
+from pathlib import Path
 
 try:
     import config
 except ImportError:
     print("Error: config.py not found. Please ensure it exists in the same directory.")
     sys.exit(1)
+
+def get_fingerprint_cached(path, fpcalc_path, cache_dir=".fingerprints"):
+    """Get fingerprint with caching support."""
+    cache_path = Path(cache_dir)
+    cache_path.mkdir(exist_ok=True)
+
+    # Create cache filename from file path hash
+    cache_file = cache_path / f"{hash(path)}.npy"
+    
+    try:
+        file_stat = os.stat(path)
+    except:
+        return None
+
+    # Check if cached fingerprint exists and is up-to-date
+    if cache_file.exists():
+        try:
+            cache_stat = os.stat(cache_file)
+            if cache_stat.st_mtime > file_stat.st_mtime:
+                cached_fp = np.load(cache_file, allow_pickle=False)
+                return cached_fp
+        except Exception:
+            pass  # Fall through to re-generate
+
+    # Generate new fingerprint
+    fp = get_fingerprint(path, fpcalc_path)
+    if fp is not None and len(fp) > 0:
+        try:
+            np.save(cache_file, fp)
+        except Exception:
+            pass  # Caching failed, but we still have the fingerprint
+
+    return fp
 
 def get_fingerprint(path, fpcalc_path):
     """Extract Chromaprint fingerprint from audio file."""
@@ -39,6 +73,9 @@ def generate_name(ref_name, vid_name, vid_dir, used_names, fixed_tags, pool_tags
     ext = os.path.splitext(vid_name)[1]
     
     if preserve_exact:
+        # Limit base title to 100 characters max
+        if len(base) > 100:
+            base = base[:100]
         candidate = f"{base}{ext}"
         if not os.path.exists(os.path.join(vid_dir, candidate)) and candidate.lower() not in used_names:
             return candidate
@@ -53,6 +90,21 @@ def generate_name(ref_name, vid_name, vid_dir, used_names, fixed_tags, pool_tags
         tags = random.sample(pool, k=min(2, len(pool))) if pool else []
         tag_str = " ".join(tags)
         full = f"{base} {fixed_tags} {tag_str}".strip()
+        
+        # Truncate intelligently to 100 chars without cutting tags in half
+        if len(full) > 100:
+            # Split into parts and rebuild within limit
+            parts = full.split()
+            truncated = []
+            current_length = 0
+            for part in parts:
+                if current_length + len(part) + (1 if truncated else 0) <= 100:
+                    truncated.append(part)
+                    current_length += len(part) + (1 if len(truncated) > 1 else 0)
+                else:
+                    break
+            full = " ".join(truncated)
+        
         candidate = f"{full}{ext}"
         if not os.path.exists(os.path.join(vid_dir, candidate)) and candidate.lower() not in used_names:
             return candidate
@@ -120,6 +172,7 @@ Examples:
     print(f"🎲 Random Tags: {pool_tags}")
     print(f"📦 Move to _Ready: {move_files}")
     print(f"📝 Exact Names: {preserve_exact}")
+    print(f"💾 Cache Directory: .fingerprints/")
     
     # Index reference audio
     print("\n" + "=" * 60)
@@ -158,7 +211,7 @@ Examples:
                         continue
                     video.audio.write_audiofile(temp_audio, logger=None, codec='pcm_s16le')
                     video.close()
-                    fp = get_fingerprint(temp_audio, fpcalc)
+                    fp = get_fingerprint_cached(temp_audio, fpcalc)
                     if os.path.exists(temp_audio):
                         try: os.remove(temp_audio)
                         except: pass
@@ -166,7 +219,7 @@ Examples:
                     print(f"    ⚠️  Error extracting audio: {e}")
                     continue
             else:
-                fp = get_fingerprint(file_path, fpcalc)
+                fp = get_fingerprint_cached(file_path, fpcalc)
             
             if fp is not None and len(fp) > 0:
                 # Use just the filename (without path) as the key
@@ -216,7 +269,7 @@ Examples:
             video.audio.write_audiofile(temp_wav, logger=None, codec='pcm_s16le')
             video.close()
             
-            q_fp = get_fingerprint(temp_wav, fpcalc)
+            q_fp = get_fingerprint_cached(temp_wav, fpcalc)
             if q_fp is None or len(q_fp) == 0:
                 print("  ⚠️  Fingerprint error")
                 continue

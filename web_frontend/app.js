@@ -101,12 +101,14 @@ function attachEventListeners() {
 
     // Action buttons
     document.getElementById('btnDownload').addEventListener('click', startDownload);
+    document.getElementById('btnDownloadMP3').addEventListener('click', startMP3Download);
     document.getElementById('btnIndex').addEventListener('click', startIndexing);
     document.getElementById('btnMatch').addEventListener('click', startMatching);
     document.getElementById('btnRename').addEventListener('click', startRenaming);
     document.getElementById('btnClear').addEventListener('click', clearResults);
     document.getElementById('btnClearLog').addEventListener('click', clearLog);
     document.getElementById('btnClearLog2')?.addEventListener('click', clearLog);
+    document.getElementById('btnClearLog3')?.addEventListener('click', clearLog);
 }
 
 // ==================== Configuration Management ====================
@@ -135,6 +137,8 @@ function loadConfig() {
                     document.getElementById('fixedTags').value = data.config.fixed_tags || '#shorts';
                     document.getElementById('poolTags').value = data.config.pool_tags || '';
                 }
+                // Always update MP3 audio dir field
+                document.getElementById('mp3AudioDir').value = data.config.audio_dir || 'Not configured';
             }
         })
         .catch(err => {
@@ -219,6 +223,82 @@ function resetDownloadButton() {
     btnDownload.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke-width="2"/></svg> Start Download';
 }
 
+// ==================== MP3 Download ====================
+function startMP3Download() {
+    const urlsText = document.getElementById('mp3UrlsInput').value.trim();
+    
+    if (!urlsText) {
+        alert('Please enter at least one URL');
+        return;
+    }
+
+    // Parse URLs and optional filenames
+    const lines = urlsText.split('\n').filter(line => line.trim());
+    const urlsData = [];
+    
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        
+        const parts = trimmed.split(/\s+/);
+        const url = parts[0];
+        const filename = parts.length > 1 ? parts.slice(1).join(' ') : '';
+        
+        urlsData.push({ url, filename });
+    }
+
+    if (urlsData.length === 0) {
+        alert('Please enter at least one valid URL');
+        return;
+    }
+
+    const btnDownloadMP3 = document.getElementById('btnDownloadMP3');
+    btnDownloadMP3.disabled = true;
+    btnDownloadMP3.innerHTML = '<svg class="spinner" width="20" height="20" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="60" stroke-dashoffset="20"/></svg> Downloading MP3s...';
+
+    // Show progress section
+    const progressSection = document.getElementById('mp3ProgressSection');
+    const progressFill = document.getElementById('mp3ProgressFill');
+    const progressText = document.getElementById('mp3ProgressText');
+    
+    progressSection.style.display = 'block';
+    progressFill.style.width = '0%';
+    progressText.textContent = `0 / ${urlsData.length}`;
+
+    addLog(`Starting MP3 download of ${urlsData.length} item(s)...`, 'info');
+
+    fetch('/api/download_mp3', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ urls: urlsData })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            addLog(`MP3 download started: ${data.count} item(s)`, 'success');
+        } else {
+            addLog('MP3 download failed: ' + (data.error || 'Unknown error'), 'error');
+            resetMP3DownloadButton();
+        }
+    })
+    .catch(err => {
+        addLog('Error starting MP3 download: ' + err.message, 'error');
+        resetMP3DownloadButton();
+    });
+}
+
+function resetMP3DownloadButton() {
+    const btnDownloadMP3 = document.getElementById('btnDownloadMP3');
+    btnDownloadMP3.disabled = false;
+    btnDownloadMP3.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke-width="2"/></svg> Download MP3s';
+    
+    // Hide progress section
+    const progressSection = document.getElementById('mp3ProgressSection');
+    if (progressSection) {
+        progressSection.style.display = 'none';
+    }
+}
+
 // ==================== Indexing ====================
 function startIndexing() {
     saveConfig();
@@ -231,6 +311,17 @@ function startIndexing() {
     const btnIndex = document.getElementById('btnIndex');
     btnIndex.disabled = true;
     btnIndex.innerHTML = '<svg class="spinner" width="20" height="20" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="60" stroke-dashoffset="20"/></svg> Indexing...';
+
+    // Show progress section
+    const progressSection = document.getElementById('indexProgressSection');
+    const progressFill = document.getElementById('indexProgressFill');
+    const progressText = document.getElementById('indexProgressText');
+    
+    if (progressSection) {
+        progressSection.style.display = 'block';
+        progressFill.style.width = '0%';
+        progressText.textContent = '0 / 0';
+    }
 
     addLog('Starting reference audio indexing...', 'info');
 
@@ -258,6 +349,12 @@ function resetIndexButton() {
     const btnIndex = document.getElementById('btnIndex');
     btnIndex.disabled = false;
     btnIndex.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 18l6-6-6-6" stroke-width="2" stroke-linecap="round"/></svg> Start Indexing';
+    
+    // Hide progress section
+    const progressSection = document.getElementById('indexProgressSection');
+    if (progressSection) {
+        progressSection.style.display = 'none';
+    }
 }
 
 // ==================== Matching ====================
@@ -393,7 +490,23 @@ function handleStatusUpdate(data) {
     if (!is_processing && lastTask) {
         if (lastTask === 'downloading') {
             resetDownloadButton();
+        } else if (lastTask === 'downloading_mp3') {
+            resetMP3DownloadButton();
+            // Also update MP3 progress bar if exists
+            const mp3ProgressFill = document.getElementById('mp3ProgressFill');
+            const mp3ProgressText = document.getElementById('mp3ProgressText');
+            if (mp3ProgressFill && total > 0) {
+                mp3ProgressFill.style.width = '100%';
+                mp3ProgressText.textContent = `${total} / ${total}`;
+            }
         } else if (lastTask === 'indexing') {
+            // Update indexing progress bar to 100%
+            const indexProgressFill = document.getElementById('indexProgressFill');
+            const indexProgressText = document.getElementById('indexProgressText');
+            if (indexProgressFill && total > 0) {
+                indexProgressFill.style.width = '100%';
+                indexProgressText.textContent = `${total} / ${total}`;
+            }
             resetIndexButton();
             fetchReferenceCount();
             // Enable match button after successful indexing
@@ -406,6 +519,28 @@ function handleStatusUpdate(data) {
             clearResults();
         }
         lastTask = null;  // Clear after handling
+    }
+    
+    // Update MP3 progress bar during download
+    if (current_task === 'downloading_mp3' && total > 0) {
+        const mp3ProgressFill = document.getElementById('mp3ProgressFill');
+        const mp3ProgressText = document.getElementById('mp3ProgressText');
+        if (mp3ProgressFill && mp3ProgressText) {
+            const percentage = Math.round((progress / total) * 100);
+            mp3ProgressFill.style.width = percentage + '%';
+            mp3ProgressText.textContent = `${progress} / ${total}`;
+        }
+    }
+    
+    // Update indexing progress bar during indexing
+    if (current_task === 'indexing' && total > 0) {
+        const indexProgressFill = document.getElementById('indexProgressFill');
+        const indexProgressText = document.getElementById('indexProgressText');
+        if (indexProgressFill && indexProgressText) {
+            const percentage = Math.round((progress / total) * 100);
+            indexProgressFill.style.width = percentage + '%';
+            indexProgressText.textContent = `${progress} / ${total}`;
+        }
     }
 }
 
@@ -498,9 +633,11 @@ function clearResults() {
 function clearLog() {
     const logContainer1 = document.getElementById('logContainer');
     const logContainer2 = document.getElementById('logContainer2');
+    const logContainer3 = document.getElementById('logContainer3');
 
     if (logContainer1) logContainer1.innerHTML = '';
     if (logContainer2) logContainer2.innerHTML = '';
+    if (logContainer3) logContainer3.innerHTML = '';
 
     addLog('Log cleared', 'info');
 }
@@ -516,9 +653,10 @@ function addLog(message, type = 'info') {
         <span class="log-message">${escapeHtml(message)}</span>
     `;
 
-    // Add to both log containers (match tab and download tab)
+    // Add to all log containers (match tab, download tab, and mp3 tab)
     const logContainer1 = document.getElementById('logContainer');
     const logContainer2 = document.getElementById('logContainer2');
+    const logContainer3 = document.getElementById('logContainer3');
 
     if (logContainer1) {
         logContainer1.appendChild(logEntry.cloneNode(true));
@@ -528,6 +666,11 @@ function addLog(message, type = 'info') {
     if (logContainer2) {
         logContainer2.appendChild(logEntry.cloneNode(true));
         logContainer2.scrollTop = logContainer2.scrollHeight;
+    }
+
+    if (logContainer3) {
+        logContainer3.appendChild(logEntry.cloneNode(true));
+        logContainer3.scrollTop = logContainer3.scrollHeight;
     }
 }
 

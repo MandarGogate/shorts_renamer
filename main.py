@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import shutil
 import subprocess
+from pathlib import Path
 
 # Third-party dependencies
 try:
@@ -49,6 +50,49 @@ THEME = {
     "input_bg": "#ffffff",
     "input_border": "#ced4da",
 }
+
+def get_fingerprint_cached(path, fpcalc_path, cache_dir=".fingerprints"):
+    """Get fingerprint with caching support."""
+    cache_path = Path(cache_dir)
+    cache_path.mkdir(exist_ok=True)
+
+    # Create cache filename from file path hash
+    cache_file = cache_path / f"{hash(path)}.npy"
+    
+    try:
+        file_stat = os.stat(path)
+    except:
+        return None
+
+    # Check if cached fingerprint exists and is up-to-date
+    if cache_file.exists():
+        try:
+            cache_stat = os.stat(cache_file)
+            if cache_stat.st_mtime > file_stat.st_mtime:
+                cached_fp = np.load(cache_file, allow_pickle=False)
+                return cached_fp
+        except Exception:
+            pass  # Fall through to re-generate
+
+    # Generate new fingerprint
+    try:
+        cmd = [fpcalc_path, "-raw", path]
+        res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        for line in res.stdout.splitlines():
+            if line.startswith("FINGERPRINT="):
+                raw = line[12:]
+                if not raw:
+                    return None
+                fp = np.array([int(x) for x in raw.split(',')], dtype=np.uint32)
+                # Cache the fingerprint
+                try:
+                    np.save(cache_file, fp)
+                except Exception:
+                    pass
+                return fp
+    except Exception:
+        return None
+    return None
 
 class ShortsSyncApp:
     def __init__(self, root):
@@ -177,6 +221,12 @@ class ShortsSyncApp:
                 fg=THEME["fg_sub"], font=("Helvetica", 10)).pack(side="left")
 
         # Buttons
+        self.download_mp3_btn = tk.Button(footer, text="Download MP3s", command=self.open_mp3_download,
+                                         bg="#6c757d", fg="white", font=("Helvetica", 11, "bold"),
+                                         relief="flat", padx=20, pady=8, cursor="hand2",
+                                         activebackground="#5a6268")
+        self.download_mp3_btn.pack(side="left", padx=(10, 0))
+
         self.rename_btn = tk.Button(footer, text="Commit Rename", command=self.commit_renames,
                                     bg=THEME["success"], fg="white", font=("Helvetica", 11, "bold"),
                                     relief="flat", padx=20, pady=8, cursor="hand2",
@@ -267,6 +317,155 @@ class ShortsSyncApp:
         d = filedialog.askdirectory()
         if d: var.set(d)
 
+    def open_mp3_download(self):
+        """Open MP3 download window."""
+        download_window = tk.Toplevel(self.root)
+        download_window.title("Download MP3s")
+        download_window.geometry("700x600")
+        download_window.configure(bg=THEME["bg"])
+        
+        # Main container
+        main = tk.Frame(download_window, bg=THEME["bg"], padx=30, pady=20)
+        main.pack(fill="both", expand=True)
+        
+        # Header
+        tk.Label(main, text="Download MP3s to Audio Directory", 
+                font=("Helvetica", 16, "bold"), bg=THEME["bg"], fg=THEME["fg"]).pack(anchor="w", pady=(0, 5))
+        
+        audio_dir = self.audio_dir.get() or (config.get_defaults()['audio_dir'] if config else "Not configured")
+        tk.Label(main, text=f"Output: {audio_dir}", 
+                font=("Helvetica", 10), bg=THEME["bg"], fg=THEME["fg_sub"]).pack(anchor="w", pady=(0, 20))
+        
+        # Instructions
+        instructions = tk.Frame(main, bg=THEME["card_bg"], relief="flat", bd=1)
+        instructions.pack(fill="x", pady=(0, 15))
+        instructions_inner = tk.Frame(instructions, bg=THEME["card_bg"], padx=15, pady=15)
+        instructions_inner.pack(fill="x")
+        
+        tk.Label(instructions_inner, text="Instructions:", 
+                font=("Helvetica", 11, "bold"), bg=THEME["card_bg"], fg=THEME["fg"]).pack(anchor="w")
+        tk.Label(instructions_inner, 
+                text="• Enter one URL per line\n• Optionally add a filename after the URL (separated by space)\n• Example: https://youtube.com/watch?v=xyz MyTrack", 
+                font=("Helvetica", 10), bg=THEME["card_bg"], fg=THEME["fg_sub"], justify="left").pack(anchor="w", pady=(5, 0))
+        
+        # Input area
+        tk.Label(main, text="URLs to Download:", 
+                font=("Helvetica", 11, "bold"), bg=THEME["bg"], fg=THEME["fg"]).pack(anchor="w", pady=(10, 5))
+        
+        text_frame = tk.Frame(main, bg="white", relief="solid", bd=1)
+        text_frame.pack(fill="both", expand=True, pady=(0, 15))
+        
+        url_text = tk.Text(text_frame, bg="white", fg=THEME["fg"], 
+                          font=("Helvetica", 11), relief="flat", padx=10, pady=10)
+        url_text.pack(side="left", fill="both", expand=True)
+        
+        scrollbar = tk.Scrollbar(text_frame, command=url_text.yview)
+        scrollbar.pack(side="right", fill="y")
+        url_text.config(yscrollcommand=scrollbar.set)
+        
+        # Status label
+        status_label = tk.Label(main, text="Ready", 
+                               font=("Helvetica", 10), bg=THEME["bg"], fg=THEME["fg_sub"])
+        status_label.pack(anchor="w", pady=(0, 10))
+        
+        # Progress
+        progress_frame = tk.Frame(main, bg=THEME["bg"])
+        progress_label = tk.Label(progress_frame, text="", 
+                                 font=("Helvetica", 9), bg=THEME["bg"], fg=THEME["fg_sub"])
+        progress_label.pack()
+        
+        # Buttons
+        button_frame = tk.Frame(main, bg=THEME["bg"])
+        button_frame.pack(fill="x", pady=(10, 0))
+        
+        def start_download():
+            content = url_text.get("1.0", tk.END).strip()
+            if not content:
+                messagebox.showwarning("No URLs", "Please enter at least one URL.")
+                return
+            
+            lines = [line.strip() for line in content.split('\n') if line.strip()]
+            if not lines:
+                messagebox.showwarning("No URLs", "Please enter at least one URL.")
+                return
+            
+            # Parse URLs and filenames
+            downloads = []
+            for line in lines:
+                parts = line.split(None, 1)
+                url = parts[0]
+                filename = parts[1] if len(parts) > 1 else None
+                downloads.append((url, filename))
+            
+            # Disable button and update status
+            download_btn.config(state="disabled", text="Downloading...")
+            status_label.config(text=f"Processing {len(downloads)} URL(s)...")
+            progress_frame.pack(fill="x", pady=(5, 0))
+            
+            def download_task():
+                output_dir = self.audio_dir.get() or (config.get_defaults()['audio_dir'] if config else None)
+                
+                if not output_dir:
+                    download_window.after(0, lambda: messagebox.showerror("Error", "Audio directory not configured."))
+                    download_window.after(0, lambda: download_btn.config(state="normal", text="Start Download"))
+                    download_window.after(0, lambda: progress_frame.pack_forget())
+                    return
+                
+                os.makedirs(output_dir, exist_ok=True)
+                successful = 0
+                failed = 0
+                
+                for i, (url, filename) in enumerate(downloads, 1):
+                    download_window.after(0, lambda i=i, t=len(downloads), u=url: 
+                                        progress_label.config(text=f"[{i}/{t}] Downloading: {u[:50]}..."))
+                    
+                    try:
+                        ydl_opts = {
+                            'format': 'bestaudio/best',
+                            'postprocessors': [{
+                                'key': 'FFmpegExtractAudio',
+                                'preferredcodec': 'mp3',
+                                'preferredquality': '192',
+                            }],
+                            'quiet': True,
+                            'no_warnings': True,
+                        }
+                        
+                        if filename:
+                            ydl_opts['outtmpl'] = os.path.join(output_dir, f'{filename}.%(ext)s')
+                        else:
+                            ydl_opts['outtmpl'] = os.path.join(output_dir, '%(title)s.%(ext)s')
+                        
+                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                            ydl.download([url])
+                        
+                        successful += 1
+                    except Exception as e:
+                        print(f"Download error for {url}: {e}")
+                        failed += 1
+                
+                # Done
+                download_window.after(0, lambda: progress_label.config(text=""))
+                download_window.after(0, lambda: progress_frame.pack_forget())
+                download_window.after(0, lambda: status_label.config(
+                    text=f"Complete! Success: {successful}, Failed: {failed}"))
+                download_window.after(0, lambda: download_btn.config(state="normal", text="Start Download"))
+                download_window.after(0, lambda: messagebox.showinfo("Download Complete", 
+                    f"Downloaded {successful} MP3(s) to:\n{output_dir}\n\nFailed: {failed}"))
+            
+            threading.Thread(target=download_task, daemon=True).start()
+        
+        download_btn = tk.Button(button_frame, text="Start Download", command=start_download,
+                               bg=THEME["accent"], fg="white", font=("Helvetica", 11, "bold"),
+                               relief="flat", padx=25, pady=8, cursor="hand2",
+                               activebackground=THEME["accent_hover"])
+        download_btn.pack(side="right")
+        
+        close_btn = tk.Button(button_frame, text="Close", command=download_window.destroy,
+                            bg=THEME["card_bg"], fg=THEME["fg"], font=("Helvetica", 11),
+                            relief="flat", padx=25, pady=8, cursor="hand2")
+        close_btn.pack(side="right", padx=(0, 10))
+
     # --- LOGIC ---
     def start_scan(self):
         if not self.video_dir.get() or not self.audio_dir.get():
@@ -322,7 +521,7 @@ class ShortsSyncApp:
                             continue
                         video.audio.write_audiofile(temp_audio, logger=None, codec='pcm_s16le')
                         video.close()
-                        fp = self._get_fingerprint(temp_audio, fpcalc)
+                        fp = get_fingerprint_cached(temp_audio, fpcalc)
                         if os.path.exists(temp_audio):
                             try: os.remove(temp_audio)
                             except: pass
@@ -330,7 +529,7 @@ class ShortsSyncApp:
                         print(f"Error extracting audio from {rel_path}: {e}")
                         continue
                 else:
-                    fp = self._get_fingerprint(file_path, fpcalc)
+                    fp = get_fingerprint_cached(file_path, fpcalc)
                 
                 if fp is not None and len(fp) > 0:
                     # Use just the filename (without path) as the key
@@ -367,7 +566,7 @@ class ShortsSyncApp:
                 video.audio.write_audiofile(temp_wav, logger=None, codec='pcm_s16le')
                 video.close()
                 
-                q_fp = self._get_fingerprint(temp_wav, fpcalc)
+                q_fp = get_fingerprint_cached(temp_wav, fpcalc)
                 if q_fp is None or len(q_fp) == 0:
                     results.append((f, "---", "FP Error"))
                     continue
@@ -436,6 +635,9 @@ class ShortsSyncApp:
         ext = os.path.splitext(vid_name)[1]
         
         if self.preserve_exact_names.get():
+            # Limit base title to 100 characters max
+            if len(base) > 100:
+                base = base[:100]
             candidate = f"{base}{ext}"
             if not os.path.exists(os.path.join(vid_dir, candidate)) and candidate.lower() not in used_names:
                 return candidate
@@ -451,6 +653,21 @@ class ShortsSyncApp:
             tags = random.sample(pool, k=min(2, len(pool))) if pool else []
             tag_str = " ".join(tags)
             full = f"{base} {fixed} {tag_str}".strip()
+            
+            # Truncate intelligently to 100 chars without cutting tags in half
+            if len(full) > 100:
+                # Split into parts and rebuild within limit
+                parts = full.split()
+                truncated = []
+                current_length = 0
+                for part in parts:
+                    if current_length + len(part) + (1 if truncated else 0) <= 100:
+                        truncated.append(part)
+                        current_length += len(part) + (1 if len(truncated) > 1 else 0)
+                    else:
+                        break
+                full = " ".join(truncated)
+            
             candidate = f"{full}{ext}"
             if not os.path.exists(os.path.join(vid_dir, candidate)) and candidate.lower() not in used_names:
                 return candidate

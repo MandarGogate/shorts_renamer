@@ -133,6 +133,9 @@ def generate_name(ref_name, vid_name, used_names, fixed_tags, pool_tags, preserv
     ext = os.path.splitext(vid_name)[1]
 
     if preserve_exact:
+        # Limit base title to 100 characters max
+        if len(base) > 100:
+            base = base[:100]
         candidate = f"{base}{ext}"
         if candidate.lower() not in used_names:
             return candidate
@@ -148,6 +151,21 @@ def generate_name(ref_name, vid_name, used_names, fixed_tags, pool_tags, preserv
         tags = random.sample(pool, k=min(2, len(pool))) if pool else []
         tag_str = " ".join(tags)
         full = f"{base} {fixed_tags} {tag_str}".strip()
+        
+        # Truncate intelligently to 100 chars without cutting tags in half
+        if len(full) > 100:
+            # Split into parts and rebuild within limit
+            parts = full.split()
+            truncated = []
+            current_length = 0
+            for part in parts:
+                if current_length + len(part) + (1 if truncated else 0) <= 100:
+                    truncated.append(part)
+                    current_length += len(part) + (1 if len(truncated) > 1 else 0)
+                else:
+                    break
+            full = " ".join(truncated)
+        
         candidate = f"{full}{ext}"
         if candidate.lower() not in used_names:
             return candidate
@@ -617,6 +635,120 @@ def download_video():
     thread.start()
 
     return jsonify({'success': True, 'message': 'Download started'})
+
+
+@app.route('/api/download_mp3', methods=['POST'])
+def download_mp3():
+    """Download MP3s from URLs to audio_dir with multiline support."""
+    global processing_status
+
+    if not YT_DLP_AVAILABLE:
+        return jsonify({'error': 'yt-dlp not installed. Run: pip install yt-dlp'}), 400
+
+    if processing_status['is_processing']:
+        return jsonify({'error': 'Processing already in progress'}), 409
+
+    data = request.json
+    urls_data = data.get('urls', [])  # List of {url, filename} objects
+    
+    if not urls_data or not isinstance(urls_data, list):
+        return jsonify({'error': 'URLs list is required'}), 400
+
+    # Get audio_dir from config
+    try:
+        settings = config.get_defaults()
+        audio_dir = settings.get('audio_dir')
+        if not audio_dir:
+            return jsonify({'error': 'audio_dir not configured in config.py'}), 400
+    except Exception as e:
+        return jsonify({'error': f'Failed to load config: {str(e)}'}), 500
+
+    # Start download in background thread
+    def download_task():
+        global processing_status
+
+        with processing_lock:
+            processing_status['is_processing'] = True
+            processing_status['current_task'] = 'downloading_mp3'
+
+            try:
+                os.makedirs(audio_dir, exist_ok=True)
+                emit_status(f"Starting MP3 download of {len(urls_data)} item(s)...")
+
+                successful = 0
+                failed = 0
+
+                for i, item in enumerate(urls_data, 1):
+                    url = item.get('url', '').strip()
+                    filename = item.get('filename', '').strip() or None
+                    
+                    if not url:
+                        emit_status(f"[{i}/{len(urls_data)}] Skipped: Empty URL")
+                        failed += 1
+                        continue
+
+                    try:
+                        # Update progress
+                        processing_status['progress'] = i - 1
+                        processing_status['total'] = len(urls_data)
+                        socketio.emit('status_update', processing_status)
+                        
+                        emit_status(f"[{i}/{len(urls_data)}] Downloading: {url[:60]}...")
+
+                        # Configure yt-dlp options
+                        ydl_opts = {
+                            'format': 'bestaudio/best',
+                            'postprocessors': [{
+                                'key': 'FFmpegExtractAudio',
+                                'preferredcodec': 'mp3',
+                                'preferredquality': '192',
+                            }],
+                            'quiet': True,
+                            'no_warnings': True,
+                        }
+
+                        if filename:
+                            ydl_opts['outtmpl'] = os.path.join(audio_dir, f'{filename}.%(ext)s')
+                            emit_status(f"  → Saving as: {filename}.mp3")
+                        else:
+                            ydl_opts['outtmpl'] = os.path.join(audio_dir, '%(title)s.%(ext)s')
+
+                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                            info = ydl.extract_info(url, download=False)
+                            title = info.get('title', 'Unknown')
+                            
+                            ydl.download([url])
+
+                        emit_status(f"  ✅ Downloaded: {filename or title}")
+                        successful += 1
+
+                    except Exception as e:
+                        emit_status(f"  ❌ Error: {str(e)}")
+                        failed += 1
+                
+                # Final progress update
+                processing_status['progress'] = len(urls_data)
+                processing_status['total'] = len(urls_data)
+                socketio.emit('status_update', processing_status)
+
+                # Summary
+                emit_status(f"✅ MP3 Download Complete!")
+                emit_status(f"   Successful: {successful}, Failed: {failed}")
+                emit_status(f"   Output: {audio_dir}")
+
+            except Exception as e:
+                emit_status(f"Error during MP3 download: {str(e)}")
+            finally:
+                processing_status['is_processing'] = False
+                processing_status['current_task'] = None
+                socketio.emit('status_update', processing_status)
+
+    thread = threading.Thread(target=download_task)
+    thread.daemon = True
+    thread.start()
+
+    return jsonify({'success': True, 'message': 'MP3 download started', 'count': len(urls_data)})
+
 
 # ==================== WebSocket Events ====================
 
