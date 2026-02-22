@@ -20,17 +20,24 @@ Press Ctrl+D (Unix) or Ctrl+Z (Windows) to finish input.
 import os
 import sys
 
+# Add parent directory to path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 try:
     import yt_dlp
 except ImportError:
     print("Error: yt-dlp is required. Install with: pip install yt-dlp")
     sys.exit(1)
 
+# Import config with better error handling
 try:
     import config
-except ImportError:
-    print("Error: config.py not found. Please ensure it exists in the same directory.")
-    sys.exit(1)
+    defaults = config.get_defaults()
+    CONFIG_AVAILABLE = True
+except Exception as e:
+    print(f"Warning: Could not load config.py: {e}")
+    config = None
+    CONFIG_AVAILABLE = False
 
 
 def parse_input_line(line):
@@ -89,12 +96,24 @@ def download_mp3(url, output_dir, filename=None):
 def main():
     """Main function to handle multiline input and download MP3s."""
     # Get audio directory from config
-    settings = config.get_defaults()
-    audio_dir = settings.get('audio_dir')
+    if CONFIG_AVAILABLE and config is not None:
+        try:
+            settings = config.get_defaults()
+            audio_dir = settings.get('audio_dir')
+        except Exception:
+            audio_dir = None
+    else:
+        audio_dir = None
     
     if not audio_dir:
         print("Error: audio_dir not configured in config.py")
-        sys.exit(1)
+        print("Please set audio_dir in config.py or provide via command line")
+        
+        # Allow manual entry
+        audio_dir = input("Enter output directory: ").strip()
+        if not audio_dir:
+            print("No directory provided. Exiting.")
+            sys.exit(1)
     
     # Create directory if it doesn't exist
     os.makedirs(audio_dir, exist_ok=True)

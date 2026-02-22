@@ -3,7 +3,7 @@
 
 # Core dependencies (also needed for CLI/GUI)
 numpy>=1.21.0
-moviepy>=1.0.3
+moviepy>=2.0.0
 yt-dlp>=2023.0.0
 
 # Web backend
@@ -11,8 +11,12 @@ Flask>=2.3.0
 flask-cors>=4.0.0
 flask-socketio>=5.3.0
 python-socketio>=5.9.0
-eventlet>=0.33.0
+werkzeug>=2.0.0
+
+# Optional: Shazam Integration (highly recommended)
+shazamio>=0.6.0
 
 # Optional: For better performance
-gevent>=22.10.0
-gevent-websocket>=0.10.1
+# eventlet>=0.33.0
+# gevent>=22.10.0
+# gevent-websocket>=0.10.1

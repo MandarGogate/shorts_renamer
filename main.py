@@ -30,11 +30,25 @@ except ImportError:
     messagebox.showerror("Missing Dependency", "yt-dlp is required.\npip install yt-dlp")
     sys.exit(1)
 
+# Import shared modules
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from shortssync import (
+    get_fingerprint_cached, 
+    generate_name,
+    get_fpcalc_path,
+    VideoAudioExtractor,
+    ShazamClient,
+    is_shazam_available
+)
+
 # Import config
 try:
     import config
-except ImportError:
+    CONFIG_AVAILABLE = True
+except Exception as e:
+    print(f"Warning: Could not load config: {e}")
     config = None
+    CONFIG_AVAILABLE = False
 
 # --- ELEGANT LIGHT THEME ---
 THEME = {
@@ -51,49 +65,6 @@ THEME = {
     "input_border": "#ced4da",
 }
 
-def get_fingerprint_cached(path, fpcalc_path, cache_dir=".fingerprints"):
-    """Get fingerprint with caching support."""
-    cache_path = Path(cache_dir)
-    cache_path.mkdir(exist_ok=True)
-
-    # Create cache filename from file path hash
-    cache_file = cache_path / f"{hash(path)}.npy"
-    
-    try:
-        file_stat = os.stat(path)
-    except:
-        return None
-
-    # Check if cached fingerprint exists and is up-to-date
-    if cache_file.exists():
-        try:
-            cache_stat = os.stat(cache_file)
-            if cache_stat.st_mtime > file_stat.st_mtime:
-                cached_fp = np.load(cache_file, allow_pickle=False)
-                return cached_fp
-        except Exception:
-            pass  # Fall through to re-generate
-
-    # Generate new fingerprint
-    try:
-        cmd = [fpcalc_path, "-raw", path]
-        res = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        for line in res.stdout.splitlines():
-            if line.startswith("FINGERPRINT="):
-                raw = line[12:]
-                if not raw:
-                    return None
-                fp = np.array([int(x) for x in raw.split(',')], dtype=np.uint32)
-                # Cache the fingerprint
-                try:
-                    np.save(cache_file, fp)
-                except Exception:
-                    pass
-                return fp
-    except Exception:
-        return None
-    return None
-
 class ShortsSyncApp:
     def __init__(self, root):
         self.root = root
@@ -106,40 +77,45 @@ class ShortsSyncApp:
         self.status_var = tk.StringVar(value="Ready")
         self.move_files_var = tk.BooleanVar(value=False)
         self.preserve_exact_names = tk.BooleanVar(value=False)
+        self.use_shazam_var = tk.BooleanVar(value=False)
         self.matches = []
+        
+        # Check Shazam availability
+        self.shazam_available = is_shazam_available()
 
         self._setup_ui()
         self._apply_defaults()
         self._check_dependencies()
 
     def _check_dependencies(self):
-        fpcalc = shutil.which("fpcalc")
-        if not fpcalc and os.path.exists("/opt/homebrew/bin/fpcalc"):
-            fpcalc = "/opt/homebrew/bin/fpcalc"
+        fpcalc = get_fpcalc_path()
         if not fpcalc:
             messagebox.showwarning("Dependency Missing", "Chromaprint 'fpcalc' is missing.\nRun: brew install chromaprint")
 
     def _apply_defaults(self):
         """Load defaults from config.py if available."""
-        if config is None:
+        if not CONFIG_AVAILABLE or config is None:
             return
         
-        defaults = config.get_defaults()
-        
-        if defaults.get('video_dir'):
-            self.video_dir.set(defaults['video_dir'])
-        if defaults.get('audio_dir'):
-            self.audio_dir.set(defaults['audio_dir'])
-        if defaults.get('fixed_tags'):
-            self.fixed_tags_entry.delete(0, tk.END)
-            self.fixed_tags_entry.insert(0, defaults['fixed_tags'])
-        if defaults.get('pool_tags'):
-            self.pool_tags_entry.delete(0, tk.END)
-            self.pool_tags_entry.insert(0, defaults['pool_tags'])
-        if 'move_files' in defaults:
-            self.move_files_var.set(defaults['move_files'])
-        if 'preserve_exact_names' in defaults:
-            self.preserve_exact_names.set(defaults['preserve_exact_names'])
+        try:
+            defaults = config.get_defaults()
+            
+            if defaults.get('video_dir'):
+                self.video_dir.set(defaults['video_dir'])
+            if defaults.get('audio_dir'):
+                self.audio_dir.set(defaults['audio_dir'])
+            if defaults.get('fixed_tags'):
+                self.fixed_tags_entry.delete(0, tk.END)
+                self.fixed_tags_entry.insert(0, defaults['fixed_tags'])
+            if defaults.get('pool_tags'):
+                self.pool_tags_entry.delete(0, tk.END)
+                self.pool_tags_entry.insert(0, defaults['pool_tags'])
+            if 'move_files' in defaults:
+                self.move_files_var.set(defaults['move_files'])
+            if 'preserve_exact_names' in defaults:
+                self.preserve_exact_names.set(defaults['preserve_exact_names'])
+        except Exception as e:
+            print(f"Error applying defaults: {e}")
 
     def _setup_ui(self):
         # Main container with padding
@@ -311,7 +287,13 @@ class ShortsSyncApp:
         
         tk.Checkbutton(checks, text="Use exact reference names (no tags)", 
                       variable=self.preserve_exact_names, bg=THEME["card_bg"], fg=THEME["fg"],
-                      selectcolor="white", font=("Helvetica", 10)).pack(side="left")
+                      selectcolor="white", font=("Helvetica", 10)).pack(side="left", padx=(0, 20))
+        
+        # Shazam option (only if available)
+        if self.shazam_available:
+            tk.Checkbutton(checks, text="Use Shazam to identify songs", 
+                          variable=self.use_shazam_var, bg=THEME["card_bg"], fg=THEME["fg"],
+                          selectcolor="white", font=("Helvetica", 10)).pack(side="left")
 
     def _browse(self, var):
         d = filedialog.askdirectory()
@@ -480,20 +462,22 @@ class ShortsSyncApp:
         threading.Thread(target=self._run_matching, daemon=True).start()
 
     def _run_matching(self):
-        fpcalc = shutil.which("fpcalc")
-        if not fpcalc and os.path.exists("/opt/homebrew/bin/fpcalc"):
-            fpcalc = "/opt/homebrew/bin/fpcalc"
+        fpcalc = get_fpcalc_path()
         
         if not fpcalc:
-            self.root.after(0, lambda: messagebox.showerror("Error", "fpcalc not found."))
+            self.root.after(0, lambda: messagebox.showerror("Error", "fpcalc not found. Install chromaprint."))
             self.root.after(0, lambda: self.scan_btn.config(state="normal"))
             return
 
         audio_path = self.audio_dir.get()
         video_path = self.video_dir.get()
+        use_shazam = self.use_shazam_var.get() and self.shazam_available
 
         self.status_var.set("Indexing reference audio...")
         ref_fps = {}
+        
+        # Track files that have been identified with Shazam
+        shazam_names = {}  # Maps original filename to Shazam-identified name
         
         try:
             audio_exts = ('.mp3', '.wav', '.m4a', '.flac', '.ogg')
@@ -507,34 +491,70 @@ class ShortsSyncApp:
                         rel_path = os.path.relpath(os.path.join(root, f), audio_path)
                         all_files.append(rel_path)
             
+            # Initialize Shazam client if needed
+            shazam_client = None
+            if use_shazam:
+                try:
+                    shazam_client = ShazamClient()
+                    self.status_var.set("Indexing with Shazam identification...")
+                except Exception as e:
+                    print(f"Shazam init error: {e}")
+                    use_shazam = False
+            
             for i, rel_path in enumerate(all_files):
                 self.status_var.set(f"Indexing ({i+1}/{len(all_files)}): {rel_path}")
                 file_path = os.path.join(audio_path, rel_path)
+                filename = os.path.basename(rel_path)
                 
-                # If it's a video file, extract audio first
-                if rel_path.lower().endswith(video_exts):
-                    temp_audio = os.path.join(audio_path, ".temp_ref_audio.wav")
-                    try:
-                        video = VideoFileClip(file_path)
-                        if not video.audio:
-                            video.close()
-                            continue
-                        video.audio.write_audiofile(temp_audio, logger=None, codec='pcm_s16le')
-                        video.close()
-                        fp = get_fingerprint_cached(temp_audio, fpcalc)
-                        if os.path.exists(temp_audio):
-                            try: os.remove(temp_audio)
-                            except: pass
-                    except Exception as e:
-                        print(f"Error extracting audio from {rel_path}: {e}")
-                        continue
-                else:
-                    fp = get_fingerprint_cached(file_path, fpcalc)
-                
-                if fp is not None and len(fp) > 0:
-                    # Use just the filename (without path) as the key
-                    filename = os.path.basename(rel_path)
-                    ref_fps[filename] = np.unpackbits(fp.view(np.uint8))
+                # Use VideoAudioExtractor for safe handling
+                temp_audio = None
+                try:
+                    # If it's a video file, extract audio first
+                    if rel_path.lower().endswith(video_exts):
+                        temp_audio = os.path.join(audio_path, f".temp_ref_audio_{i}.wav")
+                        with VideoAudioExtractor(file_path, temp_audio) as extractor:
+                            if not extractor.has_audio:
+                                continue
+                            extractor.extract_audio()
+                            fp = get_fingerprint_cached(temp_audio, fpcalc)
+                            
+                            # Try Shazam identification
+                            if use_shazam and fp is not None:
+                                try:
+                                    import asyncio
+                                    result = asyncio.run(shazam_client.identify(temp_audio))
+                                    if result:
+                                        shazam_names[filename] = result.get_filename_base()
+                                except Exception as e:
+                                    print(f"Shazam error for {filename}: {e}")
+                    else:
+                        fp = get_fingerprint_cached(file_path, fpcalc)
+                        
+                        # Try Shazam identification for audio files too
+                        if use_shazam and fp is not None:
+                            try:
+                                import asyncio
+                                result = asyncio.run(shazam_client.identify(file_path))
+                                if result:
+                                    shazam_names[filename] = result.get_filename_base()
+                            except Exception as e:
+                                print(f"Shazam error for {filename}: {e}")
+                    
+                    if fp is not None and len(fp) > 0:
+                        # Use Shazam name if available, otherwise use filename
+                        display_name = shazam_names.get(filename, filename)
+                        ref_fps[display_name] = np.unpackbits(fp.view(np.uint8))
+                        
+                except Exception as e:
+                    print(f"Error processing {rel_path}: {e}")
+                finally:
+                    # Clean up temp file
+                    if temp_audio and os.path.exists(temp_audio):
+                        try:
+                            os.remove(temp_audio)
+                        except:
+                            pass
+                        
         except Exception as e:
             print(f"Index error: {e}")
 
@@ -554,125 +574,73 @@ class ShortsSyncApp:
         for i, f in enumerate(vid_files):
             self.status_var.set(f"Matching ({i+1}/{len(vid_files)}): {f}")
             full_path = os.path.join(video_path, f)
-            temp_wav = os.path.join(video_path, ".temp_extract.wav")
+            temp_wav = os.path.join(video_path, f".temp_extract_{i}.wav")
             
             try:
-                video = VideoFileClip(full_path)
-                if not video.audio:
-                    video.close()
-                    results.append((f, "---", "No Audio"))
-                    continue
-                
-                video.audio.write_audiofile(temp_wav, logger=None, codec='pcm_s16le')
-                video.close()
-                
-                q_fp = get_fingerprint_cached(temp_wav, fpcalc)
-                if q_fp is None or len(q_fp) == 0:
-                    results.append((f, "---", "FP Error"))
-                    continue
-                
-                q_bits = np.unpackbits(q_fp.view(np.uint8))
-                n_q = len(q_bits)
-                
-                best_ber = 1.0
-                best_ref = None
-                
-                for ref_name, r_bits in ref_fps.items():
-                    n_r = len(r_bits)
-                    if n_q > n_r: continue
+                with VideoAudioExtractor(full_path, temp_wav) as extractor:
+                    if not extractor.has_audio:
+                        results.append((f, "---", "No Audio"))
+                        continue
                     
-                    n_windows = (n_r // 32) - (len(q_fp)) + 1
-                    if n_windows < 1: continue
+                    extractor.extract_audio()
                     
-                    min_dist = float('inf')
-                    for w in range(n_windows):
-                        start = w * 32
-                        end = start + n_q
-                        sub_r = r_bits[start:end]
-                        dist = np.count_nonzero(np.bitwise_xor(q_bits, sub_r))
-                        if dist < min_dist:
-                            min_dist = dist
-                            if min_dist == 0: break
+                    q_fp = get_fingerprint_cached(temp_wav, fpcalc)
+                    if q_fp is None or len(q_fp) == 0:
+                        results.append((f, "---", "FP Error"))
+                        continue
                     
-                    ber = min_dist / n_q
-                    if ber < best_ber:
-                        best_ber = ber
-                        best_ref = ref_name
-                        if best_ber == 0: break
-                
-                if best_ref and best_ber < 0.15:
-                    new_name = self._generate_name(best_ref, f, video_path, proposed_names)
-                    proposed_names.add(new_name.lower())
-                    results.append((f, new_name, f"{best_ber:.3f}"))
-                else:
-                    results.append((f, "---", f"No Match ({best_ber:.3f})"))
+                    q_bits = np.unpackbits(q_fp.view(np.uint8))
+                    n_q = len(q_bits)
+                    
+                    best_ber = 1.0
+                    best_ref = None
+                    
+                    for ref_name, r_bits in ref_fps.items():
+                        n_r = len(r_bits)
+                        if n_q > n_r: continue
+                        
+                        n_windows = (n_r // 32) - (len(q_fp)) + 1
+                        if n_windows < 1: continue
+                        
+                        min_dist = float('inf')
+                        for w in range(n_windows):
+                            start = w * 32
+                            end = start + n_q
+                            sub_r = r_bits[start:end]
+                            dist = np.count_nonzero(np.bitwise_xor(q_bits, sub_r))
+                            if dist < min_dist:
+                                min_dist = dist
+                                if min_dist == 0: break
+                        
+                        ber = min_dist / n_q if n_q > 0 else 1.0
+                        if ber < best_ber:
+                            best_ber = ber
+                            best_ref = ref_name
+                            if best_ber == 0: break
+                    
+                    if best_ref and best_ber < 0.15:
+                        new_name = generate_name(
+                            ref_name=best_ref,
+                            vid_name=f,
+                            vid_dir=video_path,
+                            used_names=proposed_names,
+                            fixed_tags=self.fixed_tags_entry.get().strip(),
+                            pool_tags=self.pool_tags_entry.get().strip(),
+                            preserve_exact=self.preserve_exact_names.get()
+                        )
+                        proposed_names.add(new_name.lower())
+                        results.append((f, new_name, f"{best_ber:.3f}"))
+                    else:
+                        results.append((f, "---", f"No Match ({best_ber:.3f})"))
 
             except Exception as e:
                 print(f"Match error {f}: {e}")
                 results.append((f, "---", "Error"))
             finally:
-                if os.path.exists(temp_wav):
-                    try: os.remove(temp_wav)
-                    except: pass
+                # VideoAudioExtractor context manager handles cleanup
+                pass
 
         self.root.after(0, lambda: self._on_scan_complete(results))
-
-    def _get_fingerprint(self, path, fpcalc_path):
-        try:
-            cmd = [fpcalc_path, "-raw", path]
-            res = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            for line in res.stdout.splitlines():
-                if line.startswith("FINGERPRINT="):
-                    raw = line[12:]
-                    if not raw: return None
-                    return np.array([int(x) for x in raw.split(',')], dtype=np.uint32)
-        except Exception:
-            return None
-        return None
-
-    def _generate_name(self, ref_name, vid_name, vid_dir, used_names):
-        base = os.path.splitext(ref_name)[0]
-        ext = os.path.splitext(vid_name)[1]
-        
-        if self.preserve_exact_names.get():
-            # Limit base title to 100 characters max
-            if len(base) > 100:
-                base = base[:100]
-            candidate = f"{base}{ext}"
-            if not os.path.exists(os.path.join(vid_dir, candidate)) and candidate.lower() not in used_names:
-                return candidate
-            for i in range(1, 100):
-                c = f"{base}_{i}{ext}"
-                if not os.path.exists(os.path.join(vid_dir, c)) and c.lower() not in used_names:
-                    return c
-        
-        fixed = self.fixed_tags_entry.get().strip()
-        pool = self.pool_tags_entry.get().split()
-        
-        for _ in range(20):
-            tags = random.sample(pool, k=min(2, len(pool))) if pool else []
-            tag_str = " ".join(tags)
-            full = f"{base} {fixed} {tag_str}".strip()
-            
-            # Truncate intelligently to 100 chars without cutting tags in half
-            if len(full) > 100:
-                # Split into parts and rebuild within limit
-                parts = full.split()
-                truncated = []
-                current_length = 0
-                for part in parts:
-                    if current_length + len(part) + (1 if truncated else 0) <= 100:
-                        truncated.append(part)
-                        current_length += len(part) + (1 if len(truncated) > 1 else 0)
-                    else:
-                        break
-                full = " ".join(truncated)
-            
-            candidate = f"{full}{ext}"
-            if not os.path.exists(os.path.join(vid_dir, candidate)) and candidate.lower() not in used_names:
-                return candidate
-        
-        return f"{base}_{random.randint(1000,9999)}{ext}"
 
     def _on_scan_complete(self, results):
         self.matches = results

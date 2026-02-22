@@ -4,12 +4,16 @@
 
 ShortsSync is a powerful automation platform that uses Chromaprint audio fingerprinting to automatically match and rename short-form videos based on their audio content. Available in GUI, CLI, and Web Interface modes, it's designed for content creators managing large libraries of TikTok, Instagram Reels, and YouTube Shorts.
 
+**New Features:** 🎵 Shazam Integration | 🐌 Slowed Audio Support | 🧩 Modular Architecture
+
 ---
 
 ## 🎯 Features
 
+### Core Features
 - **🎵 Chromaprint Audio Fingerprinting**: Industry-standard audio matching with 100% accuracy
-- **🌐 Web Interface**: Modern browser-based UI with real-time updates (NEW!)
+- **🎤 Shazam Integration**: FREE song identification with smart caching
+- **🌐 Web Interface**: Modern browser-based UI with real-time updates
 - **🖥️ GUI & CLI Modes**: Choose between GUI, CLI, or web interface
 - **📁 Recursive Directory Scanning**: Automatically finds audio/video files in nested folders
 - **🎬 Video-to-Audio Extraction**: Works with both audio files and video files
@@ -18,6 +22,13 @@ ShortsSync is a powerful automation platform that uses Chromaprint audio fingerp
 - **🎼 MP3 Conversion**: Automatically convert videos to MP3 audio files
 - **⚙️ Configurable Defaults**: Set your preferences once in `config.py`
 - **💾 Fingerprint Caching**: 100x faster startup with cached fingerprints
+
+### New in v2.0
+- **🎤 ShazamIO Integration**: Identify songs and get proper "Artist - Title" metadata
+- **🐌 Slowed Audio Support**: Match slowed/reverb versions with multi-speed reference
+- **📦 Shared Modules**: Clean architecture with reusable components
+- **🔒 Security Fixes**: Path validation and safe file operations
+- **⚡ Performance**: Fixed caching and memory leaks
 
 ---
 
@@ -29,7 +40,7 @@ ShortsSync is a powerful automation platform that uses Chromaprint audio fingerp
 2. **FFmpeg** (required for audio/video processing)
 3. **Chromaprint** (required for fingerprinting)
 
-### Install Dependencies
+### Install System Dependencies
 
 ```bash
 # macOS
@@ -38,8 +49,25 @@ brew install chromaprint ffmpeg
 # Ubuntu/Debian
 sudo apt install libchromaprint-tools ffmpeg
 
-# Python packages
+# Windows
+# Download from: https://acoustid.org/chromaprint
+# And: https://ffmpeg.org/download.html
+```
+
+### Install Python Dependencies
+
+```bash
+# Basic installation
 pip install numpy moviepy yt-dlp
+
+# With web interface
+pip install -r requirements_web.txt
+
+# With Shazam integration (recommended)
+pip install shazamio
+
+# Everything
+pip install -r requirements.txt
 ```
 
 ### Clone & Setup
@@ -61,9 +89,10 @@ python main.py
 
 The GUI provides:
 - Directory selection for videos and audio references
+- **Shazam integration toggle** for song identification
 - Tag customization (fixed tags + random tag pool)
 - Real-time matching progress
-- Preview of proposed renames before committing
+- Preview of matches before committing
 
 ### CLI Mode
 
@@ -74,34 +103,35 @@ python cli.py
 # Override directories
 python cli.py -v /path/to/videos -a /path/to/audio
 
+# Use Shazam for song identification
+python cli.py --shazam
+
+# Handle slowed audio (0.7x)
+python cli.py -a /path/to/audio/slowed_versions/0.7x
+
 # View help
 python cli.py --help
 ```
 
-### Web Interface Mode ⭐ NEW
+### Web Interface Mode
 
 ```bash
-# Install web dependencies
-pip install -r requirements_web.txt
-
 # Start web server
-./start_web.sh
-
-# Or manually
 python web_backend.py
+
+# Or use the helper script
+./start_web.sh
 ```
 
-Then check the terminal output for the URL (automatically uses an available port, typically `http://localhost:5001`)
+Then open `http://localhost:5001` (or check terminal for actual port)
 
 **Web Interface Features:**
 - 🌐 Access from any device with a browser
 - 📱 Mobile-responsive design
 - ⚡ Real-time progress updates via WebSockets
 - 💾 Automatic fingerprint caching
+- 🎤 Shazam integration toggle
 - 🔄 No installation needed on client devices
-- 🌍 Remote access on local network
-
-**[📖 Full Web Interface Documentation →](WEB_README.md)**
 
 ---
 
@@ -114,6 +144,7 @@ The main graphical interface for interactive use.
 **Features:**
 - Clean, elegant light-mode UI
 - Browse and select directories
+- **Shazam toggle** for automatic song identification
 - Configure tags and naming options
 - Preview matches before renaming
 - Move renamed files to `_Ready` folder
@@ -132,6 +163,7 @@ Automated batch processing using settings from `config.py`.
 **Features:**
 - Runs entirely from command line
 - Uses Chromaprint for 100% accurate matching
+- **Shazam integration** for proper song titles
 - Supports command-line arguments to override config
 - Interactive confirmation before renaming
 
@@ -143,6 +175,12 @@ python cli.py
 # Override video/audio directories
 python cli.py -v /path/to/videos -a /path/to/audio
 
+# Use Shazam to identify songs
+python cli.py --shazam
+
+# Adjust matching threshold
+python cli.py --threshold 0.20
+
 # Examples
 python cli.py --help
 ```
@@ -150,6 +188,8 @@ python cli.py --help
 **Arguments:**
 - `-v, --video-dir`: Video source directory (overrides config.py)
 - `-a, --audio-dir`: Audio reference directory (overrides config.py)
+- `--shazam`: Use Shazam to identify songs
+- `--threshold`: BER threshold for matching (default: 0.15)
 
 ---
 
@@ -160,6 +200,7 @@ Find and manage duplicate audio/video files using Chromaprint fingerprinting.
 **Features:**
 - Recursively scans directories (including subdirectories)
 - Identifies duplicates using audio fingerprints
+- **Shazam integration** for song identification
 - Groups duplicates together
 - Copy unique files to a new directory
 - Optional MP3 conversion during copy
@@ -175,6 +216,9 @@ python find_unique.py /path/to/audio --copy-to /path/to/output
 # Convert videos to MP3 while copying
 python find_unique.py /path/to/videos --copy-to /path/to/output --convert-to-mp3
 
+# Use Shazam to identify songs
+python find_unique.py /path/to/audio --shazam
+
 # Custom similarity threshold (stricter)
 python find_unique.py /path/to/audio --threshold 0.10
 
@@ -188,22 +232,47 @@ python find_unique.py /path/to/audio --output unique_files.txt
 - `-o, --output`: Save unique filenames to a text file
 - `-c, --copy-to`: Copy unique files to this directory
 - `--convert-to-mp3`: Convert video files to MP3 when copying
+- `--shazam`: Use Shazam to identify songs
 
-**Example Output:**
+---
+
+### 4. **create_slowed_versions.py** - Slowed Audio Generator
+
+Create slowed versions of your reference audio for matching slowed videos.
+
+**Usage:**
+```bash
+# Create 0.8x, 0.7x, and 0.5x versions
+python create_slowed_versions.py
+
+# Custom speeds
+python create_slowed_versions.py --speeds 0.9 0.8 0.7 0.6 0.5
+
+# Specific folder
+python create_slowed_versions.py --input-dir /path/to/audio --output-dir /path/to/output
 ```
-📊 Total files analyzed: 50
-✅ Unique files: 35
-🔄 Duplicate groups: 5
 
-📦 Group 1 (3 files):
-  ✓ KEEP: song1.mp4
-    duplicate: song1_copy.mp4
-    duplicate: song1_backup.mp4
+**Why use this?**
+TikTok/Shorts often use slowed (0.5x-0.8x) versions of songs. Chromaprint can't match significantly slowed audio against normal reference, so create slowed reference versions!
+
+---
+
+### 5. **download_mp3.py** - MP3 Downloader
+
+Download audio from YouTube, SoundCloud, etc. to your reference folder.
+
+**Usage:**
+```bash
+python download_mp3.py
+
+# Then enter URLs in the format:
+# https://youtube.com/watch?v=xyz SongName
+# https://soundcloud.com/artist/track
 ```
 
 ---
 
-### 4. **config.py** - Configuration
+### 6. **config.py** - Configuration
 
 Set your default preferences once.
 
@@ -221,47 +290,84 @@ DEFAULT_SETTINGS = {
 
 ---
 
+## 🎤 Shazam Integration
+
+ShortsSync now includes **FREE** Shazam integration via ShazamIO!
+
+### Features
+- 🎵 **Automatic Song ID**: Identify songs in your reference library
+- 💾 **Smart Caching**: Results cached in `.shazam_cache/` 
+- 🏷️ **Better Naming**: "Artist - Title" instead of filenames
+- 🆓 **Free**: No API key needed
+
+### Usage
+
+```bash
+# CLI with Shazam
+python cli.py --shazam
+
+# find_unique with Shazam
+python find_unique.py /path/to/audio --shazam
+```
+
+Or enable in the GUI by checking "Use Shazam to identify songs"
+
+**[📖 Full Shazam Documentation →](docs/SHAZAM_INTEGRATION.md)**
+
+---
+
+## 🐌 Slowed Audio Support
+
+TikTok/Shorts often use slowed (0.5x-0.8x) + reverb versions of songs.
+
+### The Problem
+- Chromaprint works best with **similar speeds**
+- 0.5x slowed audio won't match against normal reference
+- Shazam also fails on significantly slowed audio
+
+### The Solution
+
+**1. Create Slowed Reference Versions:**
+```bash
+python create_slowed_versions.py --speeds 0.8 0.7 0.5
+```
+
+**2. Match Based on Video Speed:**
+```bash
+# Normal videos
+python cli.py -a "/path/to/audio"
+
+# Slowed videos (0.7x)
+python cli.py -a "/path/to/audio/slowed_versions/0.7x"
+```
+
+**[📖 Full Slowed Audio Guide →](docs/SLOWED_AUDIO_GUIDE.md)**
+**[📖 Chromaprint Speed Guide →](docs/CHROMAPRINT_SPEED_GUIDE.md)**
+
+---
+
 ## 🔧 How It Works
 
 ### Chromaprint Audio Fingerprinting
 
-ShortsSync uses **Chromaprint**, the same technology behind AcoustID and used by Spotify, to create acoustic fingerprints of audio files.
+ShortsSync uses **Chromaprint**, the same technology behind AcoustID and used by Spotify.
 
 **Process:**
 1. **Extract Audio**: For videos, audio is extracted using moviepy
-2. **Generate Fingerprint**: `fpcalc` creates a unique fingerprint (array of 32-bit integers)
-3. **Convert to Bits**: Fingerprints are unpacked to bit arrays for comparison
-4. **Sliding Window Match**: Query fingerprint slides across reference fingerprints
-5. **Calculate BER**: Bit Error Rate (BER) measures similarity (0.0 = perfect match)
-6. **Match Decision**: BER < 0.15 threshold = successful match
+2. **Generate Fingerprint**: `fpcalc` creates a unique fingerprint
+3. **Sliding Window Match**: Query fingerprint slides across reference
+4. **Calculate BER**: Bit Error Rate measures similarity (0.0 = perfect)
+5. **Match Decision**: BER < 0.15 = successful match
 
-**Why Chromaprint?**
-- ✅ Robust to volume changes
-- ✅ Handles different encodings
-- ✅ Works with slight speed variations
-- ✅ Industry-standard accuracy
-- ✅ Fast and efficient
+### Shazam Integration
 
-### Matching Algorithm
+1. **Identify**: Send audio fingerprint to Shazam
+2. **Cache**: Store result in `.shazam_cache/`
+3. **Use**: Reference songs by "Artist - Title"
 
-```python
-# Simplified matching logic
-for each video:
-    extract_audio(video) → query_fingerprint
-    
-    for each reference_audio:
-        reference_fingerprint = get_fingerprint(reference_audio)
-        
-        # Sliding window comparison
-        for each_window in reference:
-            ber = calculate_bit_error_rate(query, window)
-            if ber < best_ber:
-                best_match = reference_audio
-                best_ber = ber
-    
-    if best_ber < 0.15:
-        rename_video(video, best_match)
-```
+**Why Both?**
+- Chromaprint: Matches slowed/varied versions
+- Shazam: Gets proper song metadata
 
 ---
 
@@ -272,55 +378,56 @@ for each video:
 ```bash
 # GUI
 python main.py
-# 1. Select video folder: /Users/you/Videos
-# 2. Select audio folder: /Users/you/Music
-# 3. Click "Scan & Match"
-# 4. Review matches
-# 5. Click "Commit Rename"
+# 1. Select video folder
+# 2. Select audio folder
+# 3. Enable Shazam (optional)
+# 4. Click "Scan & Match"
+# 5. Review and commit
 
 # CLI
-python cli.py -v /Users/you/Videos -a /Users/you/Music
+python cli.py -v /Users/you/Videos -a /Users/you/Music --shazam
 ```
 
-### Example 2: Find Duplicates in Upload Folder
+### Example 2: Handle Slowed Videos
 
 ```bash
-# Find duplicates
-python find_unique.py /Users/you/Uploads
+# 1. Create slowed reference versions
+python create_slowed_versions.py --speeds 0.7 0.5
 
-# Copy unique files to new folder
-python find_unique.py /Users/you/Uploads --copy-to /Users/you/Unique
-
-# Convert to MP3 while copying
-python find_unique.py /Users/you/Uploads --copy-to /Users/you/MP3s --convert-to-mp3
+# 2. Match slowed videos
+python cli.py -v /Users/you/SlowedVideos -a /Users/you/Music/slowed_versions/0.7x
 ```
 
-### Example 3: Batch Processing with Custom Tags
+### Example 3: Find Duplicates + Identify
 
-Edit `config.py`:
-```python
-DEFAULT_SETTINGS = {
-    'video_dir': '/Users/you/ToEdit',
-    'audio_dir': '/Users/you/TrendingMusic',
-    'fixed_tags': '#shorts #dance',
-    'pool_tags': '#fyp #viral #trending #foryou #reels #tiktok',
-    'move_files': True,
-}
-```
-
-Then run:
 ```bash
-python cli.py
+# Find duplicates and identify with Shazam
+python find_unique.py /Users/you/Uploads --shazam --copy-to /Users/you/Unique
+```
+
+### Example 4: Download & Process
+
+```bash
+# 1. Download trending songs
+python download_mp3.py
+# Enter URLs...
+
+# 2. Identify with Shazam
+python cli.py --shazam
+
+# 3. Match videos
+python cli.py -v /Users/you/Videos
 ```
 
 ---
 
 ## 🎨 GUI Features
 
-The GUI (`main.py`) provides a clean, elegant interface:
+The GUI (`main.py`) provides:
 
 - **Light Mode Design**: Professional, easy-to-read interface
 - **Directory Browsers**: Easy folder selection
+- **Shazam Toggle**: Enable/disable song identification
 - **Tag Configuration**: Customize fixed and random tags
 - **Match Preview**: See proposed renames before committing
 - **Progress Tracking**: Real-time status updates
@@ -336,6 +443,7 @@ The `audio_dir` can contain:
 - **Audio files**: `.mp3`, `.wav`, `.m4a`, `.flac`, `.ogg`
 - **Video files**: `.mp4`, `.mov`, `.mkv` (audio will be extracted)
 - **Nested folders**: Automatically scans all subdirectories
+- **Slowed versions**: Use `create_slowed_versions.py`
 
 ### Video Source Directory
 
@@ -345,24 +453,25 @@ The `video_dir` should contain:
 
 ### Naming Logic
 
-Generated filenames follow this pattern:
+Generated filenames:
 ```
-[Reference Audio Name] [Fixed Tags] [Random Tags].mp4
+[Artist - Title] [Fixed Tags] [Random Tags].mp4
 ```
 
 Example:
 ```
 Original: video123.mp4
-Reference Match: Taylor Swift - Cruel Summer.mp3
+Reference: Taylor Swift - Cruel Summer.mp3
 Output: Taylor Swift - Cruel Summer #shorts #fyp #viral.mp4
 ```
 
-### Collision Handling
+### Caching
 
-If a filename already exists:
-1. Try different random tag combinations (up to 20 attempts)
-2. Append `_1`, `_2`, etc. if needed
-3. Fallback to `_[random_number]` if all else fails
+Two cache systems:
+- **Fingerprint Cache** (`.fingerprints/`): Speeds up re-indexing
+- **Shazam Cache** (`.shazam_cache/`): Avoids repeated API calls
+
+Both use content-based hashing for automatic invalidation.
 
 ---
 
@@ -379,15 +488,26 @@ sudo apt install libchromaprint-tools
 
 ### "No matches found"
 - Check that audio files are in the reference directory
-- Try lowering the threshold (default is 0.15)
+- Try lowering the threshold: `--threshold 0.20`
 - Ensure videos have audio tracks
-- Verify audio quality is reasonable
+- For slowed videos, use slowed reference (see [Slowed Audio Guide](docs/SLOWED_AUDIO_GUIDE.md))
+
+### "Shazam not working"
+```bash
+pip install shazamio
+```
 
 ### "MoviePy errors"
 ```bash
-# Install/update FFmpeg
 brew install ffmpeg  # macOS
 sudo apt install ffmpeg  # Ubuntu
+```
+
+### "Slowed videos not matching"
+Create slowed reference versions:
+```bash
+python create_slowed_versions.py --speeds 0.7
+python cli.py -a "/path/to/audio/slowed_versions/0.7x"
 ```
 
 ---
@@ -396,6 +516,7 @@ sudo apt install ffmpeg  # Ubuntu
 
 - **Indexing**: ~1-2 seconds per audio file
 - **Matching**: ~2-3 seconds per video file
+- **Shazam ID**: ~1-2 seconds per song (cached after first)
 - **Accuracy**: 100% for exact audio matches
 - **BER Threshold**: 0.15 (15% bit error rate)
 
@@ -403,63 +524,44 @@ sudo apt install ffmpeg  # Ubuntu
 - Use MP3 files for faster processing
 - Keep reference library organized
 - Use SSD for better I/O performance
+- Enable caching (on by default)
 
 ---
 
-## 🗺️ Future Roadmap
+## 🗺️ Architecture
 
-### Performance Enhancements
-
-- [ ] **Fingerprint Caching**: Cache reference audio fingerprints to `.npy` files for instant startup
-- [ ] **Parallel Processing**: Multi-threaded fingerprint extraction for faster batch processing
-- [ ] **GPU Acceleration**: Leverage CUDA/Metal for audio processing on supported hardware
-- [ ] **Incremental Indexing**: Only re-index new/modified files in reference directory
-
-### Feature Additions
-
-- [ ] **Web Interface**: Browser-based UI for remote access and mobile use
-- [ ] **Batch Export**: Export match results to CSV/JSON for analytics
-- [ ] **Custom Naming Templates**: User-defined filename patterns with variables
-- [ ] **Audio Normalization**: Automatic volume leveling before fingerprinting
-- [ ] **Multi-Language Support**: Internationalization for global users
-- [ ] **Playlist Integration**: Import reference audio from Spotify/Apple Music playlists
-- [ ] **Visual Matching**: OpenCV-based watermark/logo detection as secondary matching
-- [ ] **Confidence Scoring**: Multiple matching algorithms with weighted scoring
-
-### Integration & Automation
-
-- [ ] **Cloud Storage Support**: Direct integration with Google Drive, Dropbox, OneDrive
-- [ ] **Social Media API**: Auto-upload renamed videos to TikTok/Instagram
-- [ ] **Watch Folder Mode**: Automatically process new files as they appear
-- [ ] **Webhook Support**: Trigger external workflows on match completion
-- [ ] **Docker Container**: Containerized deployment for easy setup
-- [ ] **REST API**: HTTP API for integration with other tools
-
-### Quality of Life
-
-- [ ] **Undo/Rollback**: Revert rename operations with one click
-- [ ] **Match Preview**: Audio playback comparison before committing
-- [ ] **Drag & Drop**: Drag files/folders directly into GUI
-- [ ] **Dark Mode**: Toggle between light and dark themes
-- [ ] **Match History**: Log of all previous matching sessions
-- [ ] **Smart Suggestions**: ML-based tag recommendations based on audio content
-- [ ] **Duplicate Auto-Delete**: Optionally delete duplicates instead of just identifying
-- [ ] **Batch Tag Editor**: Bulk edit tags across multiple files
-
-### Advanced Features
-
-- [ ] **Audio Segmentation**: Automatically split long videos into clips based on audio changes
-- [ ] **Beat Detection**: Align cuts to music beats for better editing
-- [ ] **Silence Removal**: Auto-trim silent portions from videos
-- [ ] **Audio Effects Detection**: Identify sped-up, slowed, or pitch-shifted versions
-- [ ] **Multi-Track Matching**: Match videos with multiple audio sources
-- [ ] **Custom Fingerprint Algorithms**: Support for alternative fingerprinting methods
+```
+shorts-renamer/
+├── shortssync/              # Shared modules package
+│   ├── __init__.py
+│   ├── fingerprint.py       # Fingerprint extraction & caching
+│   ├── naming.py            # Filename generation
+│   ├── shazam_client.py     # Shazam integration
+│   └── utils.py             # Video/audio utilities
+├── main.py                  # GUI application
+├── cli.py                   # CLI application
+├── web_backend.py           # Web server
+├── find_unique.py           # Duplicate finder
+├── create_slowed_versions.py # Slowed audio generator
+├── download_mp3.py          # MP3 downloader
+├── config.py                # Configuration
+└── docs/
+    ├── SHAZAM_INTEGRATION.md
+    ├── SLOWED_AUDIO_GUIDE.md
+    └── CHROMAPRINT_SPEED_GUIDE.md
+```
 
 ---
 
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+**Areas for contribution:**
+- Additional audio format support
+- Better speed detection for slowed audio
+- Cloud storage integration
+- Additional language support
 
 ---
 
@@ -472,15 +574,22 @@ This project is open source and available under the MIT License.
 ## 🙏 Acknowledgments
 
 - **Chromaprint/AcoustID**: Audio fingerprinting technology
-- **librosa**: Audio processing library
-- **moviepy**: Video processing
+- **ShazamIO**: Free Shazam API library
+- **MoviePy**: Video processing
 - **yt-dlp**: Media downloading
+- **Flask-SocketIO**: Real-time web updates
 
 ---
 
 ## 📞 Support
 
-For issues, questions, or feature requests, please open an issue on GitHub.
+For issues, questions, or feature requests:
+1. Check [Troubleshooting](#-troubleshooting) section
+2. Read the specific feature guides:
+   - [Shazam Integration](SHAZAM_INTEGRATION.md)
+   - [Slowed Audio Guide](SLOWED_AUDIO_GUIDE.md)
+   - [Chromaprint Speed Guide](CHROMAPRINT_SPEED_GUIDE.md)
+3. Open an issue on GitHub
 
 ---
 

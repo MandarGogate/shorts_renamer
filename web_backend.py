@@ -22,6 +22,20 @@ from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from werkzeug.utils import secure_filename
 
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from shortssync import (
+    get_fingerprint,
+    get_fingerprint_cached,
+    generate_name,
+    get_fpcalc_path,
+    VideoAudioExtractor,
+    ShazamClient,
+    is_shazam_available,
+    ShazamCache
+)
+
 try:
     from moviepy import VideoFileClip
 except ImportError:
@@ -33,7 +47,25 @@ try:
 except ImportError:
     YT_DLP_AVAILABLE = False
 
-import config
+# Import config with better error handling
+try:
+    import config
+    defaults = config.get_defaults()
+except Exception as e:
+    print(f"Warning: Could not load config.py: {e}")
+    # Create minimal defaults
+    class MockConfig:
+        @staticmethod
+        def get_defaults():
+            return {
+                'video_dir': '',
+                'audio_dir': '',
+                'fixed_tags': '#shorts',
+                'pool_tags': '#fyp #viral #trending',
+                'preserve_exact_names': False,
+                'move_files': False,
+            }
+    config = MockConfig()
 
 # ==================== Configuration ====================
 app = Flask(__name__, static_folder='web_frontend', static_url_path='')
@@ -58,14 +90,10 @@ reference_fingerprints = {}
 match_results = []
 processing_lock = threading.Lock()
 
-# ==================== Utility Functions ====================
+# Check Shazam availability
+SHAZAM_AVAILABLE = is_shazam_available()
 
-def get_fpcalc_path():
-    """Find fpcalc executable."""
-    fpcalc = shutil.which("fpcalc")
-    if not fpcalc and os.path.exists("/opt/homebrew/bin/fpcalc"):
-        fpcalc = "/opt/homebrew/bin/fpcalc"
-    return fpcalc
+# ==================== Utility Functions ====================
 
 def emit_status(message, progress=None, total=None):
     """Send status update via WebSocket."""
@@ -76,112 +104,21 @@ def emit_status(message, progress=None, total=None):
     if total is not None:
         processing_status['total'] = total
 
-    # Emit to all connected clients (no 'broadcast' parameter needed)
+    # Emit to all connected clients
     socketio.emit('status_update', processing_status)
     print(f"[Status] {message}")
 
-def get_fingerprint(path, fpcalc_path):
-    """Extract Chromaprint fingerprint from audio file."""
-    try:
-        cmd = [fpcalc_path, "-raw", path]
-        res = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=30)
-        for line in res.stdout.splitlines():
-            if line.startswith("FINGERPRINT="):
-                raw = line[12:]
-                if not raw:
-                    return None
-                return np.array([int(x) for x in raw.split(',')], dtype=np.uint32)
-    except Exception as e:
-        print(f"Error getting fingerprint for {path}: {e}")
-        return None
-    return None
-
-def get_fingerprint_cached(path, fpcalc_path, cache_dir):
-    """Get fingerprint with caching support."""
-    cache_path = Path(cache_dir)
-    cache_path.mkdir(exist_ok=True)
-
-    # Create cache filename from file path hash
-    cache_file = cache_path / f"{hash(path)}.npy"
-    file_stat = os.stat(path)
-
-    # Check if cached fingerprint exists and is up-to-date
-    if cache_file.exists():
-        cache_stat = os.stat(cache_file)
-        if cache_stat.st_mtime > file_stat.st_mtime:
-            try:
-                cached_fp = np.load(cache_file, allow_pickle=False)
-                return cached_fp
-            except Exception:
-                pass  # Fall through to re-generate
-
-    # Generate new fingerprint
-    fp = get_fingerprint(path, fpcalc_path)
-    if fp is not None and len(fp) > 0:
-        try:
-            np.save(cache_file, fp)
-        except Exception:
-            pass  # Caching failed, but we still have the fingerprint
-
-    return fp
-
-def generate_name(ref_name, vid_name, used_names, fixed_tags, pool_tags, preserve_exact):
-    """Generate unique filename based on reference."""
-    import random
-
-    base = os.path.splitext(ref_name)[0]
-    ext = os.path.splitext(vid_name)[1]
-
-    if preserve_exact:
-        # Limit base title to 100 characters max
-        if len(base) > 100:
-            base = base[:100]
-        candidate = f"{base}{ext}"
-        if candidate.lower() not in used_names:
-            return candidate
-        for i in range(1, 100):
-            c = f"{base}_{i}{ext}"
-            if c.lower() not in used_names:
-                return c
-
-    pool = pool_tags.split() if pool_tags else []
-
-    # Try 20 random tag combinations
-    for _ in range(20):
-        tags = random.sample(pool, k=min(2, len(pool))) if pool else []
-        tag_str = " ".join(tags)
-        full = f"{base} {fixed_tags} {tag_str}".strip()
-        
-        # Truncate intelligently to 100 chars without cutting tags in half
-        if len(full) > 100:
-            # Split into parts and rebuild within limit
-            parts = full.split()
-            truncated = []
-            current_length = 0
-            for part in parts:
-                if current_length + len(part) + (1 if truncated else 0) <= 100:
-                    truncated.append(part)
-                    current_length += len(part) + (1 if len(truncated) > 1 else 0)
-                else:
-                    break
-            full = " ".join(truncated)
-        
-        candidate = f"{full}{ext}"
-        if candidate.lower() not in used_names:
-            return candidate
-
-    # Fallback to random number
-    return f"{base}_{random.randint(1000,9999)}{ext}"
-
 def extract_audio_from_video(video_path, output_path):
-    """Extract audio track from video file."""
-    video = VideoFileClip(video_path)
-    if not video.audio:
-        video.close()
+    """Extract audio track from video file using safe extractor."""
+    try:
+        with VideoAudioExtractor(video_path, output_path) as extractor:
+            if not extractor.has_audio:
+                return False
+            extractor.extract_audio()
+            return True
+    except Exception as e:
+        print(f"Error extracting audio: {e}")
         return False
-    video.audio.write_audiofile(output_path, logger=None, codec='pcm_s16le')
-    video.close()
-    return True
 
 # ==================== API Routes ====================
 
@@ -200,14 +137,19 @@ def health_check():
         'dependencies': {
             'fpcalc': fpcalc is not None,
             'moviepy': True,
-            'numpy': True
+            'numpy': True,
+            'shazam': SHAZAM_AVAILABLE,
+            'yt_dlp': YT_DLP_AVAILABLE
         }
     })
 
 @app.route('/api/config', methods=['GET'])
 def get_config():
     """Get current configuration."""
-    defaults = config.get_defaults()
+    try:
+        defaults = config.get_defaults()
+    except Exception:
+        defaults = {}
     return jsonify({
         'config': defaults,
         'processing': processing_status
@@ -220,6 +162,14 @@ def update_config():
     # In a production app, you'd validate and save this
     return jsonify({'success': True, 'message': 'Configuration updated'})
 
+@app.route('/api/shazam/status', methods=['GET'])
+def shazam_status():
+    """Get Shazam availability status."""
+    return jsonify({
+        'available': SHAZAM_AVAILABLE,
+        'cache_stats': ShazamCache().get_stats() if SHAZAM_AVAILABLE else None
+    })
+
 @app.route('/api/reference/index', methods=['POST'])
 def index_reference_audio():
     """Index reference audio files."""
@@ -230,8 +180,11 @@ def index_reference_audio():
 
     data = request.json
     audio_dir = data.get('audio_dir')
+    use_shazam = data.get('use_shazam', False) and SHAZAM_AVAILABLE
 
-    if not audio_dir or not os.path.exists(audio_dir):
+    # Validate and sanitize path (prevent path traversal)
+    audio_dir = os.path.abspath(os.path.normpath(audio_dir))
+    if not os.path.exists(audio_dir) or not os.path.isdir(audio_dir):
         return jsonify({'error': 'Invalid audio directory'}), 400
 
     # Start indexing in background thread
@@ -249,6 +202,17 @@ def index_reference_audio():
                 if not fpcalc:
                     emit_status("Error: fpcalc not found. Install chromaprint.")
                     return
+
+                # Initialize Shazam client if needed
+                shazam_client = None
+                shazam_names = {}
+                if use_shazam:
+                    try:
+                        shazam_client = ShazamClient()
+                        emit_status("Shazam client initialized")
+                    except Exception as e:
+                        emit_status(f"Shazam init failed: {e}")
+                        use_shazam = False
 
                 ref_fps = {}
                 audio_exts = ('.mp3', '.wav', '.m4a', '.flac', '.ogg')
@@ -270,25 +234,53 @@ def index_reference_audio():
 
                     # Handle video files (extract audio first)
                     if filename.lower().endswith(video_exts):
-                        temp_audio = os.path.join(audio_dir, ".temp_ref_audio.wav")
+                        temp_audio = os.path.join(audio_dir, f".temp_ref_audio_{i}.wav")
                         try:
-                            if not extract_audio_from_video(file_path, temp_audio):
-                                emit_status(f"Skipping {filename} (no audio track)", i, total)
-                                continue
-                            fp = get_fingerprint_cached(temp_audio, fpcalc, app.config['FINGERPRINT_CACHE'])
-                            if os.path.exists(temp_audio):
-                                os.remove(temp_audio)
+                            with VideoAudioExtractor(file_path, temp_audio) as extractor:
+                                if not extractor.has_audio:
+                                    emit_status(f"Skipping {filename} (no audio track)", i, total)
+                                    continue
+                                
+                                extractor.extract_audio()
+                                fp = get_fingerprint_cached(temp_audio, fpcalc, app.config['FINGERPRINT_CACHE'])
+                                
+                                # Try Shazam identification
+                                if use_shazam and fp is not None:
+                                    try:
+                                        import asyncio
+                                        result = asyncio.run(shazam_client.identify(temp_audio))
+                                        if result:
+                                            shazam_names[filename] = result.get_filename_base()
+                                            emit_status(f"🎵 Shazam: {result.artist} - {result.title}", i, total)
+                                    except Exception as e:
+                                        print(f"Shazam error for {filename}: {e}")
                         except Exception as e:
                             emit_status(f"Error with {filename}: {str(e)}", i, total)
                             continue
                     else:
                         fp = get_fingerprint_cached(file_path, fpcalc, app.config['FINGERPRINT_CACHE'])
+                        
+                        # Try Shazam identification for audio files too
+                        if use_shazam and fp is not None:
+                            try:
+                                import asyncio
+                                result = asyncio.run(shazam_client.identify(file_path))
+                                if result:
+                                    shazam_names[filename] = result.get_filename_base()
+                                    emit_status(f"🎵 Shazam: {result.artist} - {result.title}", i, total)
+                            except Exception as e:
+                                print(f"Shazam error for {filename}: {e}")
 
                     if fp is not None and len(fp) > 0:
-                        ref_fps[filename] = np.unpackbits(fp.view(np.uint8))
+                        # Use Shazam name if available, otherwise use filename
+                        display_name = shazam_names.get(filename, filename)
+                        ref_fps[display_name] = np.unpackbits(fp.view(np.uint8))
 
                 reference_fingerprints = ref_fps
                 emit_status(f"✅ Indexed {len(ref_fps)} reference tracks", total, total)
+                
+                if shazam_names:
+                    emit_status(f"🎵 Shazam identified {len(shazam_names)} tracks")
 
             except Exception as e:
                 emit_status(f"Error during indexing: {str(e)}")
@@ -330,7 +322,9 @@ def match_videos():
     preserve_exact = data.get('preserve_exact_names', False)
     threshold = data.get('threshold', 0.15)
 
-    if not video_dir or not os.path.exists(video_dir):
+    # Validate and sanitize path
+    video_dir = os.path.abspath(os.path.normpath(video_dir))
+    if not os.path.exists(video_dir) or not os.path.isdir(video_dir):
         return jsonify({'error': 'Invalid video directory'}), 400
 
     # Start matching in background thread
@@ -367,77 +361,83 @@ def match_videos():
                     temp_wav = os.path.join(video_dir, f".temp_extract_{i}.wav")
 
                     try:
-                        # Extract audio from video
-                        if not extract_audio_from_video(full_path, temp_wav):
-                            emit_status(f"Skipping {f} (no audio)", i, total)
-                            continue
-
-                        # Get fingerprint
-                        q_fp = get_fingerprint(temp_wav, fpcalc)
-                        if q_fp is None or len(q_fp) == 0:
-                            emit_status(f"Fingerprint error for {f}", i, total)
-                            continue
-
-                        q_bits = np.unpackbits(q_fp.view(np.uint8))
-                        n_q = len(q_bits)
-
-                        # Find best match using sliding window
-                        best_ber = 1.0
-                        best_ref = None
-
-                        for ref_name, r_bits in reference_fingerprints.items():
-                            n_r = len(r_bits)
-                            if n_q > n_r:
+                        # Extract audio from video using safe extractor
+                        with VideoAudioExtractor(full_path, temp_wav) as extractor:
+                            if not extractor.has_audio:
+                                emit_status(f"Skipping {f} (no audio)", i, total)
                                 continue
 
-                            n_windows = (n_r // 32) - len(q_fp) + 1
-                            if n_windows < 1:
+                            extractor.extract_audio()
+
+                            # Get fingerprint
+                            q_fp = get_fingerprint(temp_wav, fpcalc)
+                            if q_fp is None or len(q_fp) == 0:
+                                emit_status(f"Fingerprint error for {f}", i, total)
                                 continue
 
-                            min_dist = float('inf')
-                            for w in range(n_windows):
-                                start = w * 32
-                                end = start + n_q
-                                sub_r = r_bits[start:end]
-                                dist = np.count_nonzero(np.bitwise_xor(q_bits, sub_r))
-                                if dist < min_dist:
-                                    min_dist = dist
-                                    if min_dist == 0:
+                            q_bits = np.unpackbits(q_fp.view(np.uint8))
+                            n_q = len(q_bits)
+
+                            # Find best match using sliding window
+                            best_ber = 1.0
+                            best_ref = None
+
+                            for ref_name, r_bits in reference_fingerprints.items():
+                                n_r = len(r_bits)
+                                if n_q > n_r:
+                                    continue
+
+                                n_windows = (n_r // 32) - len(q_fp) + 1
+                                if n_windows < 1:
+                                    continue
+
+                                min_dist = float('inf')
+                                for w in range(n_windows):
+                                    start = w * 32
+                                    end = start + n_q
+                                    sub_r = r_bits[start:end]
+                                    dist = np.count_nonzero(np.bitwise_xor(q_bits, sub_r))
+                                    if dist < min_dist:
+                                        min_dist = dist
+                                        if min_dist == 0:
+                                            break
+
+                                ber = min_dist / n_q if n_q > 0 else 1.0
+                                if ber < best_ber:
+                                    best_ber = ber
+                                    best_ref = ref_name
+                                    if best_ber == 0:
                                         break
 
-                            ber = min_dist / n_q
-                            if ber < best_ber:
-                                best_ber = ber
-                                best_ref = ref_name
-                                if best_ber == 0:
-                                    break
+                            # Check if match is good enough
+                            if best_ref and best_ber < threshold:
+                                # Use generate_name which now properly checks both used_names and file existence
+                                new_name = generate_name(
+                                    ref_name=best_ref,
+                                    vid_name=f,
+                                    vid_dir=video_dir,
+                                    used_names=proposed_names,
+                                    fixed_tags=fixed_tags,
+                                    pool_tags=pool_tags,
+                                    preserve_exact=preserve_exact
+                                )
+                                proposed_names.add(new_name.lower())
 
-                        # Check if match is good enough
-                        if best_ref and best_ber < threshold:
-                            new_name = generate_name(best_ref, f, proposed_names,
-                                                    fixed_tags, pool_tags, preserve_exact)
-                            proposed_names.add(new_name.lower())
-
-                            match = {
-                                'original': f,
-                                'new_name': new_name,
-                                'matched_ref': best_ref,
-                                'ber': float(best_ber),
-                                'confidence': float(1.0 - best_ber)
-                            }
-                            matches.append(match)
-                            emit_status(f"✅ Matched {f} → {best_ref} (BER: {best_ber:.3f})", i, total)
-                        else:
-                            emit_status(f"❌ No match for {f} (best BER: {best_ber:.3f})", i, total)
+                                match = {
+                                    'original': f,
+                                    'new_name': new_name,
+                                    'matched_ref': best_ref,
+                                    'ber': float(best_ber),
+                                    'confidence': float(1.0 - best_ber)
+                                }
+                                matches.append(match)
+                                emit_status(f"✅ Matched {f} → {best_ref} (BER: {best_ber:.3f})", i, total)
+                            else:
+                                emit_status(f"❌ No match for {f} (best BER: {best_ber:.3f})", i, total)
 
                     except Exception as e:
                         emit_status(f"Error processing {f}: {str(e)}", i, total)
-                    finally:
-                        if os.path.exists(temp_wav):
-                            try:
-                                os.remove(temp_wav)
-                            except:
-                                pass
+                    # VideoAudioExtractor context manager handles cleanup
 
                 match_results = matches
                 emit_status(f"✅ Matching complete: {len(matches)} matches found", total, total)
@@ -479,7 +479,9 @@ def rename_videos():
     video_dir = data.get('video_dir')
     move_files = data.get('move_files', False)
 
-    if not video_dir or not os.path.exists(video_dir):
+    # Validate and sanitize path
+    video_dir = os.path.abspath(os.path.normpath(video_dir))
+    if not os.path.exists(video_dir) or not os.path.isdir(video_dir):
         return jsonify({'error': 'Invalid video directory'}), 400
 
     # Start renaming in background thread
@@ -566,6 +568,9 @@ def download_video():
 
     if not output_dir:
         output_dir = os.path.join(os.getcwd(), 'downloads')
+
+    # Validate output directory
+    output_dir = os.path.abspath(os.path.normpath(output_dir))
 
     # Start download in background thread
     def download_task():
@@ -662,6 +667,9 @@ def download_mp3():
             return jsonify({'error': 'audio_dir not configured in config.py'}), 400
     except Exception as e:
         return jsonify({'error': f'Failed to load config: {str(e)}'}), 500
+
+    # Validate audio directory
+    audio_dir = os.path.abspath(os.path.normpath(audio_dir))
 
     # Start download in background thread
     def download_task():
@@ -765,7 +773,7 @@ def handle_disconnect():
 
 # ==================== Utility Functions ====================
 
-def find_available_port(start_port=5001, max_attempts=10):
+def find_available_port(start_port=5001, max_attempts=100):
     """Find an available port starting from start_port."""
     for port in range(start_port, start_port + max_attempts):
         try:
@@ -782,8 +790,12 @@ def find_available_port(start_port=5001, max_attempts=10):
 # ==================== Main ====================
 
 if __name__ == '__main__':
+    # Determine environment
+    is_production = os.environ.get('FLASK_ENV') == 'production'
+    
     # Find available port
-    port = find_available_port(start_port=5001)
+    start_port = int(os.environ.get('PORT', 5001))
+    port = find_available_port(start_port=start_port)
 
     print("=" * 60)
     print("ShortsSync Web Backend")
@@ -791,8 +803,8 @@ if __name__ == '__main__':
     print(f"Starting server on http://localhost:{port}")
     print(f"Web UI: http://localhost:{port}")
     print(f"API: http://localhost:{port}/api/*")
-    if port != 5001:
-        print(f"\n⚠️  Note: Using port {port} (port 5001 was unavailable)")
+    if port != start_port:
+        print(f"\n⚠️  Note: Using port {port} (port {start_port} was unavailable)")
     print("=" * 60)
 
     # Create necessary directories
@@ -804,6 +816,22 @@ if __name__ == '__main__':
     if not fpcalc:
         print("\n⚠️  Warning: fpcalc not found. Audio fingerprinting will not work.")
         print("Install with: brew install chromaprint (macOS) or apt install libchromaprint-tools (Linux)")
+    
+    # Check Shazam
+    if SHAZAM_AVAILABLE:
+        print("✅ Shazam integration available")
+    else:
+        print("ℹ️  Shazam not available (pip install shazamio to enable)")
 
     # Start server
-    socketio.run(app, host='0.0.0.0', port=port, debug=True, allow_unsafe_werkzeug=True)
+    # In production, debug=False and don't allow unsafe werkzeug
+    debug_mode = not is_production
+    allow_unsafe = not is_production
+    
+    socketio.run(
+        app, 
+        host='0.0.0.0', 
+        port=port, 
+        debug=debug_mode, 
+        allow_unsafe_werkzeug=allow_unsafe
+    )

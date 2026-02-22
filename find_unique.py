@@ -6,9 +6,20 @@ Find Unique Audio Files - Uses Chromaprint to identify duplicate audio files
 import os
 import sys
 import shutil
-import subprocess
 import argparse
 from collections import defaultdict
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from shortssync import (
+    get_fingerprint,
+    get_fpcalc_path,
+    VideoAudioExtractor,
+    compare_fingerprints,
+    ShazamClient,
+    is_shazam_available
+)
 
 try:
     import numpy as np
@@ -16,57 +27,6 @@ except ImportError:
     print("Error: numpy is required.\npip install numpy")
     sys.exit(1)
 
-try:
-    from moviepy import VideoFileClip
-except ImportError:
-    print("Error: moviepy is required.\npip install moviepy")
-    sys.exit(1)
-
-def get_fingerprint(path, fpcalc_path):
-    """Extract Chromaprint fingerprint from audio/video file."""
-    try:
-        cmd = [fpcalc_path, "-raw", path]
-        res = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        for line in res.stdout.splitlines():
-            if line.startswith("FINGERPRINT="):
-                raw = line[12:]
-                if not raw: return None
-                return np.array([int(x) for x in raw.split(',')], dtype=np.uint32)
-    except Exception:
-        return None
-    return None
-
-def extract_audio_from_video(video_path, output_path):
-    """Extract audio from video file to temporary WAV."""
-    try:
-        video = VideoFileClip(video_path)
-        if not video.audio:
-            video.close()
-            return False
-        video.audio.write_audiofile(output_path, logger=None, codec='pcm_s16le')
-        video.close()
-        return True
-    except Exception:
-        return False
-
-def compare_fingerprints(fp1, fp2, threshold=0.15):
-    """Compare two fingerprints using Bit Error Rate (BER)."""
-    if fp1 is None or fp2 is None:
-        return False
-    
-    bits1 = np.unpackbits(fp1.view(np.uint8))
-    bits2 = np.unpackbits(fp2.view(np.uint8))
-    
-    # Make sure they're the same length (use shorter)
-    min_len = min(len(bits1), len(bits2))
-    bits1 = bits1[:min_len]
-    bits2 = bits2[:min_len]
-    
-    # Calculate BER
-    diff = np.count_nonzero(np.bitwise_xor(bits1, bits2))
-    ber = diff / min_len
-    
-    return ber < threshold
 
 def main():
     parser = argparse.ArgumentParser(
@@ -79,6 +39,7 @@ Examples:
   python find_unique.py /path/to/audio --output unique_list.txt
   python find_unique.py /path/to/audio --copy-to /path/to/unique_folder
   python find_unique.py /path/to/audio --copy-to /path/to/output --convert-to-mp3
+  python find_unique.py /path/to/audio --shazam  # Identify songs with Shazam
         """
     )
     parser.add_argument('directory', help='Directory to scan for audio/video files (includes subdirectories)')
@@ -88,19 +49,26 @@ Examples:
     parser.add_argument('-c', '--copy-to', help='Copy unique files to this directory')
     parser.add_argument('--convert-to-mp3', action='store_true',
                        help='Convert video files to MP3 when copying (requires --copy-to)')
+    parser.add_argument('--shazam', action='store_true',
+                       help='Use Shazam to identify songs')
     
     args = parser.parse_args()
     
     # Check fpcalc
-    fpcalc = shutil.which("fpcalc")
-    if not fpcalc and os.path.exists("/opt/homebrew/bin/fpcalc"):
-        fpcalc = "/opt/homebrew/bin/fpcalc"
+    fpcalc = get_fpcalc_path()
     
     if not fpcalc:
         print("❌ Error: fpcalc not found.")
         print("Install with: brew install chromaprint")
         sys.exit(1)
     
+    # Check Shazam availability
+    use_shazam = args.shazam and is_shazam_available()
+    if args.shazam and not is_shazam_available():
+        print("⚠️  Warning: Shazam requested but shazamio not installed.")
+        print("   Install with: pip install shazamio")
+    
+    # Validate directory
     if not os.path.exists(args.directory):
         print(f"❌ Error: Directory not found: {args.directory}")
         sys.exit(1)
@@ -111,6 +79,18 @@ Examples:
     print(f"\n📁 Directory: {args.directory}")
     print(f"🎯 BER Threshold: {args.threshold}")
     print(f"🔄 Recursive: Yes (includes subdirectories)")
+    print(f"🎵 Shazam Integration: {'Enabled' if use_shazam else 'Disabled'}")
+    
+    # Initialize Shazam client if needed
+    shazam_client = None
+    shazam_results = {}
+    if use_shazam:
+        try:
+            shazam_client = ShazamClient()
+            print("✅ Shazam client initialized")
+        except Exception as e:
+            print(f"⚠️  Shazam init failed: {e}")
+            use_shazam = False
     
     # Find all files (always recursive)
     audio_exts = ('.mp3', '.wav', '.m4a', '.flac', '.ogg')
@@ -135,7 +115,6 @@ Examples:
     print("=" * 70)
     
     fingerprints = {}
-    temp_audio = os.path.join(args.directory, ".temp_unique_check.wav")
     
     for i, file_path in enumerate(all_files, 1):
         filename = os.path.basename(file_path)
@@ -143,16 +122,42 @@ Examples:
         
         # Check if it's a video file
         if file_path.lower().endswith(video_exts):
-            if extract_audio_from_video(file_path, temp_audio):
-                fp = get_fingerprint(temp_audio, fpcalc)
-                if os.path.exists(temp_audio):
-                    try: os.remove(temp_audio)
-                    except: pass
-            else:
-                print("  ⚠️  No audio track")
+            temp_audio = os.path.join(args.directory, f".temp_unique_check_{i}.wav")
+            try:
+                with VideoAudioExtractor(file_path, temp_audio) as extractor:
+                    if not extractor.has_audio:
+                        print("  ⚠️  No audio track")
+                        continue
+                    
+                    extractor.extract_audio()
+                    fp = get_fingerprint(temp_audio, fpcalc)
+                    
+                    # Try Shazam identification
+                    if use_shazam and fp is not None:
+                        try:
+                            import asyncio
+                            result = asyncio.run(shazam_client.identify(temp_audio))
+                            if result:
+                                shazam_results[file_path] = result
+                                print(f"  🎵 Shazam: {result.artist} - {result.title}")
+                        except Exception as e:
+                            print(f"  ⚠️  Shazam error: {e}")
+            except Exception as e:
+                print(f"  ⚠️  Error extracting audio: {e}")
                 continue
         else:
             fp = get_fingerprint(file_path, fpcalc)
+            
+            # Try Shazam identification for audio files too
+            if use_shazam and fp is not None:
+                try:
+                    import asyncio
+                    result = asyncio.run(shazam_client.identify(file_path))
+                    if result:
+                        shazam_results[file_path] = result
+                        print(f"  🎵 Shazam: {result.artist} - {result.title}")
+                except Exception as e:
+                    print(f"  ⚠️  Shazam error: {e}")
         
         if fp is not None:
             fingerprints[file_path] = fp
@@ -160,6 +165,8 @@ Examples:
             print("  ⚠️  Failed to extract fingerprint")
     
     print(f"\n✅ Extracted {len(fingerprints)} fingerprints")
+    if shazam_results:
+        print(f"🎵 Shazam identified {len(shazam_results)} tracks")
     
     # Find duplicates
     print("\n" + "=" * 70)
@@ -183,7 +190,13 @@ Examples:
             if file2 in processed:
                 continue
             
-            if compare_fingerprints(fingerprints[file1], fingerprints[file2], args.threshold):
+            is_match, ber = compare_fingerprints(
+                fingerprints[file1], 
+                fingerprints[file2], 
+                args.threshold
+            )
+            
+            if is_match:
                 group.append(file2)
                 processed.add(file2)
         
@@ -211,13 +224,38 @@ Examples:
             print(f"\n📦 Group {i} ({len(group)} files):")
             for j, file_path in enumerate(group):
                 marker = "✓ KEEP" if j == 0 else "  duplicate"
-                print(f"  {marker}: {os.path.basename(file_path)}")
+                shazam_info = ""
+                if file_path in shazam_results:
+                    r = shazam_results[file_path]
+                    shazam_info = f" [{r.artist} - {r.title}]"
+                print(f"  {marker}: {os.path.basename(file_path)}{shazam_info}")
+    
+    # Print Shazam results for unique files
+    if shazam_results:
+        print("\n" + "=" * 70)
+        print("SHAZAM IDENTIFICATIONS")
+        print("=" * 70)
+        for file_path in unique_files:
+            if file_path in shazam_results:
+                r = shazam_results[file_path]
+                print(f"\n{os.path.basename(file_path)}")
+                print(f"  Artist: {r.artist}")
+                print(f"  Title: {r.title}")
+                print(f"  Album: {r.album or 'N/A'}")
+                print(f"  Genre: {r.genre or 'N/A'}")
+                if r.shazam_url:
+                    print(f"  URL: {r.shazam_url}")
     
     # Save to file if requested
     if args.output:
         with open(args.output, 'w') as f:
             for file_path in unique_files:
-                f.write(f"{file_path}\n")
+                # Include Shazam info if available
+                if file_path in shazam_results:
+                    r = shazam_results[file_path]
+                    f.write(f"{file_path}|{r.artist}|{r.title}\n")
+                else:
+                    f.write(f"{file_path}\n")
         print(f"\n💾 Unique files saved to: {args.output}")
     
     # Copy unique files if requested
@@ -237,19 +275,24 @@ Examples:
         copied = 0
         failed = 0
         
-        video_exts = ('.mp4', '.mov', '.mkv')
-        
         for file_path in unique_files:
             filename = os.path.basename(file_path)
             
+            # Use Shazam name for output if available
+            if file_path in shazam_results:
+                r = shazam_results[file_path]
+                base_name = f"{r.artist} - {r.title}"
+                # Sanitize filename
+                base_name = "".join(c for c in base_name if c.isalnum() or c in (' ', '-', '_')).strip()
+            else:
+                base_name = os.path.splitext(filename)[0]
+            
             # Determine output filename
             if args.convert_to_mp3 and file_path.lower().endswith(video_exts):
-                # Convert video to MP3
-                base_name = os.path.splitext(filename)[0]
                 output_filename = f"{base_name}.mp3"
             else:
-                # Keep original extension
-                output_filename = filename
+                ext = os.path.splitext(filename)[1]
+                output_filename = f"{base_name}{ext}"
             
             dest_path = os.path.join(args.copy_to, output_filename)
             
@@ -267,16 +310,33 @@ Examples:
                 
                 # Convert or copy
                 if args.convert_to_mp3 and file_path.lower().endswith(video_exts):
-                    # Extract audio and save as MP3
-                    video = VideoFileClip(file_path)
-                    if not video.audio:
-                        video.close()
-                        print(f"  ⚠️  {filename}: No audio track, skipping")
-                        continue
+                    # Extract audio and save as MP3 using moviepy directly
+                    try:
+                        from moviepy import VideoFileClip
+                    except ImportError:
+                        from moviepy.editor import VideoFileClip
                     
-                    video.audio.write_audiofile(dest_path, logger=None, codec='mp3', bitrate='192k')
-                    video.close()
-                    print(f"  ✅ {filename} → {output_filename} (converted)")
+                    video = None
+                    try:
+                        video = VideoFileClip(file_path)
+                        if not video.audio:
+                            print(f"  ⚠️  {filename}: No audio track, skipping")
+                            continue
+                        
+                        video.audio.write_audiofile(
+                            dest_path, 
+                            logger=None, 
+                            codec='mp3', 
+                            bitrate='192k',
+                            verbose=False
+                        )
+                        print(f"  ✅ {filename} → {output_filename} (converted)")
+                    finally:
+                        if video is not None:
+                            try:
+                                video.close()
+                            except:
+                                pass
                 else:
                     # Regular copy
                     shutil.copy2(file_path, dest_path)
@@ -295,7 +355,16 @@ Examples:
     print("UNIQUE FILES")
     print("=" * 70)
     for file_path in unique_files:
-        print(f"  {os.path.basename(file_path)}")
+        display_name = os.path.basename(file_path)
+        if file_path in shazam_results:
+            r = shazam_results[file_path]
+            display_name = f"{display_name} [{r.artist} - {r.title}]"
+        print(f"  {display_name}")
+    
+    # Print Shazam cache stats
+    if use_shazam and shazam_client:
+        stats = shazam_client.get_cache_stats()
+        print(f"\n🎵 Shazam cache: {stats['total_cached']} songs cached")
 
 if __name__ == "__main__":
     main()

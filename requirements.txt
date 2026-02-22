@@ -1,0 +1,20 @@
+# ShortsSync Core Dependencies
+numpy>=1.20.0
+moviepy>=2.0.0
+
+# Web Interface
+flask>=2.0.0
+flask-cors>=3.0.0
+flask-socketio>=5.0.0
+python-socketio>=5.0.0
+werkzeug>=2.0.0
+
+# Downloading
+yt-dlp>=2023.0.0
+
+# Optional: Shazam Integration (highly recommended)
+shazamio>=0.6.0
+
+# Optional: Audio processing enhancements
+# librosa>=0.10.0  # For advanced audio analysis
+# soundfile>=0.12.0  # For audio I/O
