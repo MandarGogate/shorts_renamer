@@ -174,6 +174,25 @@ function checkHealth() {
         .catch(err => {
             addLog('Health check failed: ' + err.message, 'error');
         });
+    
+    // Check Shazam availability
+    checkShazamStatus();
+}
+
+// ==================== Shazam Status ====================
+function checkShazamStatus() {
+    fetch('/api/shazam/status')
+        .then(res => res.json())
+        .then(data => {
+            const shazamOption = document.getElementById('shazamOption');
+            if (data.available && shazamOption) {
+                shazamOption.style.display = 'block';
+                addLog('Shazam integration available', 'info');
+            }
+        })
+        .catch(err => {
+            console.log('Shazam status check failed:', err);
+        });
 }
 
 // ==================== Download ====================
@@ -325,10 +344,15 @@ function startIndexing() {
 
     addLog('Starting reference audio indexing...', 'info');
 
+    const useShazam = document.getElementById('useShazam')?.checked || false;
+    
     fetch('/api/reference/index', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ audio_dir: config.audio_dir })
+        body: JSON.stringify({ 
+            audio_dir: config.audio_dir,
+            use_shazam: useShazam
+        })
     })
     .then(res => res.json())
     .then(data => {
