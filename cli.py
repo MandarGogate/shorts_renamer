@@ -34,6 +34,91 @@ except Exception as e:
     sys.exit(1)
 
 
+def rename_audio_command(args):
+    """Rename audio files based on Shazam identification."""
+    import asyncio
+    
+    if not is_shazam_available():
+        print("❌ Error: shazamio not installed. Run: pip install shazamio")
+        return
+    
+    audio_dir = args.audio_dir or defaults.get('audio_dir', '')
+    if not audio_dir or not os.path.exists(audio_dir):
+        print(f"❌ Error: Audio directory not found: {audio_dir}")
+        return
+    
+    print("=" * 60)
+    print("Rename Audio Files with Shazam")
+    print("=" * 60)
+    print(f"Directory: {audio_dir}")
+    print(f"Mode: {'DRY RUN' if args.dry_run else 'LIVE'}")
+    
+    # Find audio files
+    audio_exts = ('.mp3', '.wav', '.m4a', '.flac', '.ogg')
+    audio_files = [f for f in os.listdir(audio_dir) 
+                   if f.lower().endswith(audio_exts)]
+    
+    if not audio_files:
+        print("❌ No audio files found")
+        return
+    
+    print(f"Found {len(audio_files)} file(s)\n")
+    
+    client = ShazamClient()
+    renamed = skipped = failed = 0
+    
+    for i, filename in enumerate(audio_files, 1):
+        file_path = os.path.join(audio_dir, filename)
+        print(f"[{i}/{len(audio_files)}] {filename}")
+        
+        try:
+            result = asyncio.run(client.identify(file_path))
+            if not result:
+                print("  ⚠️  Not identified")
+                failed += 1
+                continue
+            
+            # Create new name
+            def sanitize(name):
+                for c in '<>:\"/\\|?*':
+                    name = name.replace(c, '_')
+                return name.strip()
+            
+            new_name = f"{sanitize(result.artist)} - {sanitize(result.title)}"
+            _, ext = os.path.splitext(filename)
+            new_filename = f"{new_name}{ext}"
+            
+            if filename == new_filename:
+                print("  ✓ Already correct")
+                skipped += 1
+                continue
+            
+            new_path = os.path.join(audio_dir, new_filename)
+            
+            # Handle duplicates
+            counter = 1
+            while os.path.exists(new_path):
+                new_filename = f"{new_name} ({counter}){ext}"
+                new_path = os.path.join(audio_dir, new_filename)
+                counter += 1
+            
+            print(f"  → {new_filename}")
+            
+            if args.dry_run:
+                print("  [DRY RUN]")
+            else:
+                os.rename(file_path, new_path)
+                print("  ✅ Renamed")
+                renamed += 1
+                
+        except Exception as e:
+            print(f"  ❌ Error: {e}")
+            failed += 1
+    
+    print(f"\n{'='*60}")
+    print(f"Renamed: {renamed}, Skipped: {skipped}, Failed: {failed}")
+
+
 def main():
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
@@ -44,14 +129,24 @@ Examples:
   python cli.py
   python cli.py --video-dir /path/to/videos --audio-dir /path/to/audio
   python cli.py -v /path/to/videos -a /path/to/audio --shazam
+  python cli.py --rename-audio --audio-dir /path/to/audio --dry-run
         """
     )
     parser.add_argument('-v', '--video-dir', help='Video source directory (overrides config.py)')
     parser.add_argument('-a', '--audio-dir', help='Audio reference directory (overrides config.py)')
+    parser.add_argument('--rename-audio', action='store_true', 
+                       help='Rename audio files based on Shazam identification')
+    parser.add_argument('--dry-run', action='store_true',
+                       help='Preview changes without renaming (use with --rename-audio)')
     parser.add_argument('--shazam', action='store_true', help='Use Shazam to identify audio files')
     parser.add_argument('--threshold', type=float, default=0.15, help='BER threshold for matching (default: 0.15)')
     
     args = parser.parse_args()
+    
+    # Handle rename audio command
+    if args.rename_audio:
+        rename_audio_command(args)
+        return
     
     print("=" * 60)
     print("ShortsSync CLI - Chromaprint Audio Matcher")
