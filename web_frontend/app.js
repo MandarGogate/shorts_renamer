@@ -344,14 +344,11 @@ function startIndexing() {
 
     addLog('Starting reference audio indexing...', 'info');
 
-    const useShazam = document.getElementById('useShazam')?.checked || false;
-    
     fetch('/api/reference/index', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-            audio_dir: config.audio_dir,
-            use_shazam: useShazam
+            audio_dir: config.audio_dir
         })
     })
     .then(res => res.json())
@@ -395,6 +392,8 @@ function startMatching() {
     btnMatch.innerHTML = '<svg class="spinner" width="20" height="20" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="60" stroke-dashoffset="20"/></svg> Matching...';
 
     addLog('Starting video matching...', 'info');
+    
+    const useShazamFallback = document.getElementById('useShazamFallback')?.checked || false;
 
     fetch('/api/videos/match', {
         method: 'POST',
@@ -403,7 +402,8 @@ function startMatching() {
             video_dir: config.video_dir,
             fixed_tags: config.fixed_tags,
             pool_tags: config.pool_tags,
-            preserve_exact_names: config.preserve_exact_names
+            preserve_exact_names: config.preserve_exact_names,
+            use_shazam_fallback: useShazamFallback
         })
     })
     .then(res => res.json())

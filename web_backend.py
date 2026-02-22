@@ -324,6 +324,7 @@ def match_videos():
     pool_tags = data.get('pool_tags', '#fyp #viral #trending')
     preserve_exact = data.get('preserve_exact_names', False)
     threshold = data.get('threshold', 0.15)
+    use_shazam_fallback = data.get('use_shazam_fallback', False) and SHAZAM_AVAILABLE
 
     # Validate and sanitize path
     video_dir = os.path.abspath(os.path.normpath(video_dir))
@@ -333,6 +334,8 @@ def match_videos():
     # Start matching in background thread
     def match_task():
         global match_results, processing_status
+        
+        local_use_shazam = use_shazam_fallback
 
         with processing_lock:
             processing_status['is_processing'] = True
@@ -346,6 +349,16 @@ def match_videos():
                 if not fpcalc:
                     emit_status("Error: fpcalc not found")
                     return
+                
+                # Initialize Shazam client if fallback is enabled
+                shazam_client = None
+                if local_use_shazam:
+                    try:
+                        shazam_client = ShazamClient()
+                        emit_status("Shazam fallback enabled for unmatched videos")
+                    except Exception as e:
+                        emit_status(f"Shazam init failed: {e}")
+                        local_use_shazam = False
 
                 # Find all video files (non-recursive for video dir)
                 vid_files = [f for f in os.listdir(video_dir)
@@ -356,6 +369,7 @@ def match_videos():
 
                 matches = []
                 proposed_names = set()
+                shazam_matches = 0
 
                 for i, f in enumerate(vid_files, 1):
                     emit_status(f"Matching {f}...", i, total)
@@ -413,6 +427,7 @@ def match_videos():
                                         break
 
                             # Check if match is good enough
+                            matched = False
                             if best_ref and best_ber < threshold:
                                 # Use generate_name which now properly checks both used_names and file existence
                                 new_name = generate_name(
@@ -431,11 +446,63 @@ def match_videos():
                                     'new_name': new_name,
                                     'matched_ref': best_ref,
                                     'ber': float(best_ber),
-                                    'confidence': float(1.0 - best_ber)
+                                    'confidence': float(1.0 - best_ber),
+                                    'match_type': 'fingerprint'
                                 }
                                 matches.append(match)
                                 emit_status(f"✅ Matched {f} → {best_ref} (BER: {best_ber:.3f})", i, total)
-                            else:
+                                matched = True
+                            
+                            # Try Shazam fallback if no match and Shazam is enabled
+                            if not matched and local_use_shazam and shazam_client:
+                                try:
+                                    import asyncio
+                                    emit_status(f"🔍 Trying Shazam for {f}...", i, total)
+                                    result = asyncio.run(shazam_client.identify(temp_wav))
+                                    
+                                    if result:
+                                        shazam_name = result.get_filename_base()
+                                        # Look for this song in reference library by name
+                                        for ref_name in reference_fingerprints.keys():
+                                            # Check if Shazam name matches reference (case insensitive, allow partial)
+                                            ref_base = os.path.splitext(ref_name)[0].lower()
+                                            shazam_lower = shazam_name.lower()
+                                            
+                                            if shazam_lower in ref_base or ref_base in shazam_lower:
+                                                # Found a match via Shazam!
+                                                new_name = generate_name(
+                                                    ref_name=ref_name,
+                                                    vid_name=f,
+                                                    vid_dir=video_dir,
+                                                    used_names=proposed_names,
+                                                    fixed_tags=fixed_tags,
+                                                    pool_tags=pool_tags,
+                                                    preserve_exact=preserve_exact
+                                                )
+                                                proposed_names.add(new_name.lower())
+
+                                                match = {
+                                                    'original': f,
+                                                    'new_name': new_name,
+                                                    'matched_ref': ref_name,
+                                                    'ber': 0.0,  # Perfect match via Shazam
+                                                    'confidence': 1.0,
+                                                    'match_type': 'shazam',
+                                                    'shazam_artist': result.artist,
+                                                    'shazam_title': result.title
+                                                }
+                                                matches.append(match)
+                                                emit_status(f"🎵 Shazam matched {f} → {ref_name}", i, total)
+                                                shazam_matches += 1
+                                                matched = True
+                                                break
+                                        
+                                        if not matched:
+                                            emit_status(f"🎵 Shazam found '{shazam_name}' but not in reference library", i, total)
+                                except Exception as e:
+                                    emit_status(f"Shazam error for {f}: {e}", i, total)
+                            
+                            if not matched:
                                 emit_status(f"❌ No match for {f} (best BER: {best_ber:.3f})", i, total)
 
                     except Exception as e:
@@ -443,7 +510,10 @@ def match_videos():
                     # VideoAudioExtractor context manager handles cleanup
 
                 match_results = matches
-                emit_status(f"✅ Matching complete: {len(matches)} matches found", total, total)
+                if shazam_matches > 0:
+                    emit_status(f"✅ Matching complete: {len(matches)} matches ({shazam_matches} via Shazam)", total, total)
+                else:
+                    emit_status(f"✅ Matching complete: {len(matches)} matches found", total, total)
 
             except Exception as e:
                 emit_status(f"Error during matching: {str(e)}")

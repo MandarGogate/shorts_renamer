@@ -138,7 +138,8 @@ Examples:
                        help='Rename audio files based on Shazam identification')
     parser.add_argument('--dry-run', action='store_true',
                        help='Preview changes without renaming (use with --rename-audio)')
-    parser.add_argument('--shazam', action='store_true', help='Use Shazam to identify audio files')
+    parser.add_argument('--shazam', action='store_true', help='Use Shazam to identify reference audio files during indexing')
+    parser.add_argument('--shazam-fallback', action='store_true', help='Use Shazam as fallback for unmatched videos')
     parser.add_argument('--threshold', type=float, default=0.15, help='BER threshold for matching (default: 0.15)')
     
     args = parser.parse_args()
@@ -191,7 +192,9 @@ Examples:
     
     # Check Shazam availability
     use_shazam = args.shazam and is_shazam_available()
-    if args.shazam and not is_shazam_available():
+    use_shazam_fallback = args.shazam_fallback and is_shazam_available()
+    
+    if (args.shazam or args.shazam_fallback) and not is_shazam_available():
         print("\n⚠️  Warning: Shazam requested but shazamio not installed.")
         print("   Install with: pip install shazamio")
     
@@ -202,7 +205,8 @@ Examples:
     print(f"📦 Move to _Ready: {move_files}")
     print(f"📝 Exact Names: {preserve_exact}")
     print(f"💾 Cache Directory: .fingerprints/")
-    print(f"🎵 Shazam Integration: {'Enabled' if use_shazam else 'Disabled'}")
+    print(f"🎵 Shazam (reference ID): {'Enabled' if use_shazam else 'Disabled'}")
+    print(f"🎵 Shazam (fallback): {'Enabled' if use_shazam_fallback else 'Disabled'}")
     print(f"🎯 BER Threshold: {threshold}")
     
     # Initialize Shazam client if needed
@@ -319,11 +323,24 @@ Examples:
     
     matches = []
     proposed_names = set()
+    shazam_fallback_matches = 0
+    
+    # Initialize Shazam client for fallback if needed
+    shazam_fallback_client = None
+    if use_shazam_fallback:
+        try:
+            shazam_fallback_client = ShazamClient()
+            print("\n🎵 Shazam fallback enabled for unmatched videos")
+        except Exception as e:
+            print(f"\n⚠️  Shazam fallback init failed: {e}")
+            use_shazam_fallback = False
     
     for i, f in enumerate(vid_files, 1):
         print(f"[{i}/{len(vid_files)}] {f}")
         full_path = os.path.join(video_dir, f)
         temp_wav = os.path.join(video_dir, f".temp_extract_{i}.wav")
+        
+        matched = False
         
         try:
             with VideoAudioExtractor(full_path, temp_wav) as extractor:
@@ -381,7 +398,45 @@ Examples:
                     matches.append((f, new_name, best_ber))
                     print(f"  ✅ Match: {best_ref} (BER: {best_ber:.3f})")
                     print(f"     → {new_name}")
-                else:
+                    matched = True
+                
+                # Try Shazam fallback if no match
+                if not matched and use_shazam_fallback and shazam_fallback_client:
+                    try:
+                        print(f"  🔍 Trying Shazam fallback...")
+                        result = asyncio.run(shazam_fallback_client.identify(temp_wav))
+                        
+                        if result:
+                            shazam_name = result.get_filename_base()
+                            # Look for match in reference library by name
+                            for ref_name in ref_fps.keys():
+                                ref_base = os.path.splitext(ref_name)[0].lower()
+                                shazam_lower = shazam_name.lower()
+                                
+                                if shazam_lower in ref_base or ref_base in shazam_lower:
+                                    new_name = generate_name(
+                                        ref_name=ref_name,
+                                        vid_name=f,
+                                        vid_dir=video_dir,
+                                        used_names=proposed_names,
+                                        fixed_tags=fixed_tags,
+                                        pool_tags=pool_tags,
+                                        preserve_exact=preserve_exact
+                                    )
+                                    proposed_names.add(new_name.lower())
+                                    matches.append((f, new_name, 0.0))
+                                    print(f"  🎵 Shazam match: {ref_name}")
+                                    print(f"     → {new_name}")
+                                    shazam_fallback_matches += 1
+                                    matched = True
+                                    break
+                            
+                            if not matched:
+                                print(f"  🎵 Shazam found '{shazam_name}' but not in reference library")
+                    except Exception as e:
+                        print(f"  ⚠️  Shazam error: {e}")
+                
+                if not matched:
                     print(f"  ❌ No match (best BER: {best_ber:.3f})")
         
         except Exception as e:
@@ -390,7 +445,10 @@ Examples:
     
     # Summary
     print("\n" + "=" * 60)
-    print(f"Found {len(matches)} matches")
+    if shazam_fallback_matches > 0:
+        print(f"Found {len(matches)} matches ({shazam_fallback_matches} via Shazam fallback)")
+    else:
+        print(f"Found {len(matches)} matches")
     print("=" * 60)
     
     if not matches:
