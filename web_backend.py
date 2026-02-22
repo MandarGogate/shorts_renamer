@@ -190,6 +190,9 @@ def index_reference_audio():
     # Start indexing in background thread
     def index_task():
         global reference_fingerprints, processing_status
+        
+        # Copy use_shazam to local scope to avoid closure issues
+        local_use_shazam = use_shazam
 
         with processing_lock:
             processing_status['is_processing'] = True
@@ -206,13 +209,13 @@ def index_reference_audio():
                 # Initialize Shazam client if needed
                 shazam_client = None
                 shazam_names = {}
-                if use_shazam:
+                if local_use_shazam:
                     try:
                         shazam_client = ShazamClient()
                         emit_status("Shazam client initialized")
                     except Exception as e:
                         emit_status(f"Shazam init failed: {e}")
-                        use_shazam = False
+                        local_use_shazam = False
 
                 ref_fps = {}
                 audio_exts = ('.mp3', '.wav', '.m4a', '.flac', '.ogg')
@@ -245,7 +248,7 @@ def index_reference_audio():
                                 fp = get_fingerprint_cached(temp_audio, fpcalc, app.config['FINGERPRINT_CACHE'])
                                 
                                 # Try Shazam identification
-                                if use_shazam and fp is not None:
+                                if local_use_shazam and fp is not None:
                                     try:
                                         import asyncio
                                         result = asyncio.run(shazam_client.identify(temp_audio))
@@ -261,7 +264,7 @@ def index_reference_audio():
                         fp = get_fingerprint_cached(file_path, fpcalc, app.config['FINGERPRINT_CACHE'])
                         
                         # Try Shazam identification for audio files too
-                        if use_shazam and fp is not None:
+                        if local_use_shazam and fp is not None:
                             try:
                                 import asyncio
                                 result = asyncio.run(shazam_client.identify(file_path))
