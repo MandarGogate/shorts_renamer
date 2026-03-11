@@ -321,3 +321,122 @@ def find_best_match(
                 break
     
     return best_ref, best_ber
+
+
+def create_slowed_audio(input_path: str, output_path: str, speed: float = 0.8) -> bool:
+    """
+    Create a slowed version of an audio file using ffmpeg.
+    
+    Args:
+        input_path: Path to input audio file
+        output_path: Path for output slowed audio
+        speed: Speed factor (0.5 = half speed, 0.8 = 80% speed)
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        # ffmpeg atempo filter: 0.5 to 2.0 range
+        if speed >= 0.5:
+            filter_str = f"atempo={speed}"
+        else:
+            # Chain filters for speeds < 0.5
+            filter_str = f"atempo=0.5,atempo={speed/0.5}"
+        
+        cmd = [
+            'ffmpeg',
+            '-y',  # Overwrite output
+            '-i', input_path,
+            '-filter:a', filter_str,
+            '-vn',  # No video
+            '-ar', '44100',  # Standard sample rate for consistent fingerprints
+            '-ac', '2',  # Stereo
+            output_path
+        ]
+        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        return result.returncode == 0
+        
+    except subprocess.TimeoutExpired:
+        return False
+    except Exception:
+        return False
+
+
+def get_slowed_fingerprint(
+    path: str,
+    speed: float = 0.8,
+    fpcalc_path: Optional[str] = None,
+    temp_dir: Optional[str] = None
+) -> Optional[np.ndarray]:
+    """
+    Get fingerprint of a slowed version of an audio file.
+    Creates temporary slowed audio, fingerprints it, then cleans up.
+    
+    Args:
+        path: Path to original audio file
+        speed: Speed factor for slowing (0.8 = 80% speed)
+        fpcalc_path: Path to fpcalc executable
+        temp_dir: Directory for temporary files (default: same as input)
+    
+    Returns:
+        Fingerprint of slowed audio or None on error
+    """
+    if temp_dir is None:
+        temp_dir = os.path.dirname(path) or "."
+    
+    # Create unique temp filename
+    base_name = os.path.splitext(os.path.basename(path))[0]
+    temp_path = os.path.join(temp_dir, f"._temp_slowed_{speed}_{base_name}.wav")
+    
+    try:
+        # Create slowed version
+        if not create_slowed_audio(path, temp_path, speed):
+            return None
+        
+        # Get fingerprint of slowed version
+        fp = get_fingerprint(temp_path, fpcalc_path)
+        
+        return fp
+        
+    finally:
+        # Clean up temp file
+        try:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        except OSError:
+            pass
+
+
+def generate_slowed_fingerprints(
+    path: str,
+    speeds: list = None,
+    fpcalc_path: Optional[str] = None,
+    temp_dir: Optional[str] = None
+) -> Dict[float, Optional[np.ndarray]]:
+    """
+    Generate fingerprints for multiple slowed versions of an audio file.
+    
+    Args:
+        path: Path to original audio file
+        speeds: List of speed factors (default: [0.8, 0.7])
+        fpcalc_path: Path to fpcalc executable
+        temp_dir: Directory for temporary files
+    
+    Returns:
+        Dictionary mapping speed factor to fingerprint
+    """
+    if speeds is None:
+        speeds = [0.8, 0.7]
+    
+    result = {}
+    for speed in speeds:
+        result[speed] = get_slowed_fingerprint(path, speed, fpcalc_path, temp_dir)
+    
+    return result

@@ -6,13 +6,18 @@ If you want to change defaults, edit `DEFAULT_SETTINGS` directly.
 """
 
 DEFAULT_SETTINGS = {
-    'video_dir': '/Users/mandargogate/Work/CC/03Outputs',
+    # 'video_dir': '/Users/mandargogate/Work/CC/04Edited/',
+    'video_dir': '/Users/mandargogate/Work/CC/03Outputs/',
+    # 'video_dir': '/Users/mandargogate/Work/CC/05UploadQueue/',
+    # 'video_dir': '/Users/mandargogate/Work/CC/05UploadQueue/',
     'audio_dir': '/Users/mandargogate/Work/CC/09trending',
     'fixed_tags': '#dance #viral #shorts',
-    'pool_tags': '#fyp #viral #trending #foryou #reels',
+    'pool_tags': '#fyp #trending #foryou #trend',
+    # 'fixed_tags': '#shorts',
+    # 'pool_tags': '#1 #2 #3 #4 #5 #6 #7 #8 #9 #10',
     'preserve_exact_titles': True,
     'preserve_exact_names': False,
-    'move_files': True,
+    'move_files': False,
     'feature_method': 'combined',
     # Alignment / scoring defaults
     'use_alignment': True,
@@ -33,6 +38,14 @@ DEFAULT_SETTINGS = {
     'min_alignment_confidence': 0.3,
     # If True, we must have alignment_conf >= min_alignment_confidence to accept any match
     'require_alignment_for_match': False,
+    # Shazam settings
+    'use_shazam': False,  # Enable Shazam to identify reference audio files during indexing
+    'use_shazam_fallback': True,  # Use Shazam as fallback for unmatched videos
+    'save_new_audio': True,  # Save Shazam-identified audio to reference library
+    'shazam_fallback_any': True,  # Use Shazam name directly when song not in reference library
+    # Slowed audio detection
+    'detect_slowed': True,  # Detect slowed videos and add [SLOWED] label
+    'slowed_speeds': [0.75, 0.5],  # Speed factors to check for slowed detection
 }
 
 def get_defaults():

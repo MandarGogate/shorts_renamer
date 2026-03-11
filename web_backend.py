@@ -310,7 +310,7 @@ def list_reference_audio():
 @app.route('/api/videos/match', methods=['POST'])
 def match_videos():
     """Match videos against reference audio."""
-    global match_results, processing_status
+    global match_results, processing_status, reference_fingerprints
 
     if processing_status['is_processing']:
         return jsonify({'error': 'Processing already in progress'}), 409
@@ -320,16 +320,23 @@ def match_videos():
 
     data = request.json
     video_dir = data.get('video_dir')
+    audio_dir = data.get('audio_dir', '')
     fixed_tags = data.get('fixed_tags', '#shorts')
     pool_tags = data.get('pool_tags', '#fyp #viral #trending')
     preserve_exact = data.get('preserve_exact_names', False)
     threshold = data.get('threshold', 0.15)
     use_shazam_fallback = data.get('use_shazam_fallback', False) and SHAZAM_AVAILABLE
+    save_new_audio = data.get('save_new_audio', False) and audio_dir
 
-    # Validate and sanitize path
+    # Validate and sanitize paths
     video_dir = os.path.abspath(os.path.normpath(video_dir))
     if not os.path.exists(video_dir) or not os.path.isdir(video_dir):
         return jsonify({'error': 'Invalid video directory'}), 400
+    
+    if save_new_audio:
+        audio_dir = os.path.abspath(os.path.normpath(audio_dir))
+        if not os.path.exists(audio_dir):
+            return jsonify({'error': 'Invalid audio directory for saving'}), 400
 
     # Start matching in background thread
     def match_task():
@@ -499,6 +506,32 @@ def match_videos():
                                         
                                         if not matched:
                                             emit_status(f"🎵 Shazam found '{shazam_name}' but not in reference library", i, total)
+                                            
+                                            # Optionally save audio to reference library
+                                            if save_new_audio and audio_dir:
+                                                try:
+                                                    import shutil
+                                                    safe_name = "".join(c for c in shazam_name if c.isalnum() or c in (' ', '-', '_')).strip()
+                                                    new_audio_path = os.path.join(audio_dir, f"{safe_name}.mp3")
+                                                    
+                                                    # Handle duplicates
+                                                    counter = 1
+                                                    base_path = new_audio_path
+                                                    while os.path.exists(new_audio_path):
+                                                        new_audio_path = base_path.replace('.mp3', f' ({counter}).mp3')
+                                                        counter += 1
+                                                    
+                                                    # Copy the temp audio file
+                                                    shutil.copy2(temp_wav, new_audio_path)
+                                                    
+                                                    # Add to reference fingerprints immediately
+                                                    saved_fp = get_fingerprint_cached(new_audio_path, fpcalc, app.config['FINGERPRINT_CACHE'])
+                                                    if saved_fp is not None and len(saved_fp) > 0:
+                                                        ref_fps[os.path.basename(new_audio_path)] = np.unpackbits(saved_fp.view(np.uint8))
+                                                        reference_fingerprints = ref_fps  # Update global
+                                                        emit_status(f"💾 Saved to reference library: {os.path.basename(new_audio_path)}", i, total)
+                                                except Exception as e:
+                                                    emit_status(f"⚠️  Could not save audio: {e}", i, total)
                                 except Exception as e:
                                     emit_status(f"Shazam error for {f}: {e}", i, total)
                             

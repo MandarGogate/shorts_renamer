@@ -196,16 +196,17 @@ class ShazamClient:
         self.shazam = Shazam()
         self.cache = ShazamCache(cache_dir)
     
-    async def identify(self, audio_path: str, use_cache: bool = True) -> Optional[ShazamResult]:
+    async def identify(self, audio_path: str, use_cache: bool = True, timeout: int = 30) -> Optional[ShazamResult]:
         """
         Identify a song from audio file.
         
         Args:
             audio_path: Path to audio file
             use_cache: Whether to use caching
+            timeout: Maximum seconds to wait for Shazam API
         
         Returns:
-            ShazamResult or None if not identified
+            ShazamResult or None if not identified or timeout
         """
         audio_path = os.path.abspath(audio_path)
         
@@ -218,8 +219,14 @@ class ShazamClient:
             if cached:
                 return cached
         
-        # Call Shazam API
-        result = await self.shazam.recognize(audio_path)
+        # Call Shazam API with timeout
+        try:
+            result = await asyncio.wait_for(
+                self.shazam.recognize(audio_path),
+                timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            return None
         
         if not result or 'track' not in result:
             return None

@@ -115,8 +115,7 @@ class VideoAudioExtractor:
         self.video_clip.audio.write_audiofile(
             output_path,
             logger=None,
-            codec=codec,
-            verbose=False
+            codec=codec
         )
         
         self._extraction_path = output_path
@@ -176,8 +175,7 @@ def extract_audio_safe(
         video_clip.audio.write_audiofile(
             actual_output_path,
             logger=None,
-            codec=codec,
-            verbose=False
+            codec=codec
         )
         
         yield actual_output_path

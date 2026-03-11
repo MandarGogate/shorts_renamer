@@ -394,16 +394,19 @@ function startMatching() {
     addLog('Starting video matching...', 'info');
     
     const useShazamFallback = document.getElementById('useShazamFallback')?.checked || false;
+    const saveNewAudio = document.getElementById('saveNewAudio')?.checked || false;
 
     fetch('/api/videos/match', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             video_dir: config.video_dir,
+            audio_dir: config.audio_dir,
             fixed_tags: config.fixed_tags,
             pool_tags: config.pool_tags,
             preserve_exact_names: config.preserve_exact_names,
-            use_shazam_fallback: useShazamFallback
+            use_shazam_fallback: useShazamFallback,
+            save_new_audio: saveNewAudio
         })
     })
     .then(res => res.json())
