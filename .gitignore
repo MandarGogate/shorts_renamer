@@ -2,7 +2,8 @@
 __pycache__/
 *.py[cod]
 *$py.class
-
+.fingerprints/
+.shazam_cache/
 # C extensions
 *.so
 

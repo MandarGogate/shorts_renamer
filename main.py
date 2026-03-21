@@ -35,6 +35,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shortssync import (
     get_fingerprint_cached, 
     generate_name,
+    build_reference_label,
     get_fpcalc_path,
     VideoAudioExtractor,
     ShazamClient,
@@ -475,9 +476,10 @@ class ShortsSyncApp:
 
         self.status_var.set("Indexing reference audio...")
         ref_fps = {}
-        
+        used_ref_labels = set()
+
         # Track files that have been identified with Shazam
-        shazam_names = {}  # Maps original filename to Shazam-identified name
+        shazam_names = {}  # Maps original relative path to Shazam-identified name
         
         try:
             audio_exts = ('.mp3', '.wav', '.m4a', '.flac', '.ogg')
@@ -516,7 +518,7 @@ class ShortsSyncApp:
                             if not extractor.has_audio:
                                 continue
                             extractor.extract_audio()
-                            fp = get_fingerprint_cached(temp_audio, fpcalc)
+                            fp = get_fingerprint_cached(temp_audio, fpcalc, cache_key_source=file_path)
                             
                             # Try Shazam identification
                             if use_shazam and fp is not None:
@@ -524,7 +526,7 @@ class ShortsSyncApp:
                                     import asyncio
                                     result = asyncio.run(shazam_client.identify(temp_audio))
                                     if result:
-                                        shazam_names[filename] = result.get_filename_base()
+                                        shazam_names[rel_path] = result.get_filename_base()
                                 except Exception as e:
                                     print(f"Shazam error for {filename}: {e}")
                     else:
@@ -536,13 +538,18 @@ class ShortsSyncApp:
                                 import asyncio
                                 result = asyncio.run(shazam_client.identify(file_path))
                                 if result:
-                                    shazam_names[filename] = result.get_filename_base()
+                                    shazam_names[rel_path] = result.get_filename_base()
                             except Exception as e:
                                 print(f"Shazam error for {filename}: {e}")
                     
                     if fp is not None and len(fp) > 0:
                         # Use Shazam name if available, otherwise use filename
-                        display_name = shazam_names.get(filename, filename)
+                        display_name = build_reference_label(
+                            rel_path,
+                            shazam_names.get(rel_path, filename),
+                            used_ref_labels
+                        )
+                        used_ref_labels.add(display_name.lower())
                         ref_fps[display_name] = np.unpackbits(fp.view(np.uint8))
                         
                 except Exception as e:
@@ -584,7 +591,7 @@ class ShortsSyncApp:
                     
                     extractor.extract_audio()
                     
-                    q_fp = get_fingerprint_cached(temp_wav, fpcalc)
+                    q_fp = get_fingerprint_cached(temp_wav, fpcalc, cache_key_source=full_path)
                     if q_fp is None or len(q_fp) == 0:
                         results.append((f, "---", "FP Error"))
                         continue

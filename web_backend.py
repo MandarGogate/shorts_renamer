@@ -29,6 +29,7 @@ from shortssync import (
     get_fingerprint,
     get_fingerprint_cached,
     generate_name,
+    build_reference_label,
     get_fpcalc_path,
     VideoAudioExtractor,
     ShazamClient,
@@ -209,6 +210,7 @@ def index_reference_audio():
                 # Initialize Shazam client if needed
                 shazam_client = None
                 shazam_names = {}
+                used_ref_labels = set()
                 if local_use_shazam:
                     try:
                         shazam_client = ShazamClient()
@@ -227,12 +229,14 @@ def index_reference_audio():
                     for f in files:
                         if f.lower().endswith(audio_exts) or f.lower().endswith(video_exts):
                             full_path = os.path.join(root, f)
-                            all_files.append((f, full_path))
+                            rel_path = os.path.relpath(full_path, audio_dir)
+                            all_files.append((rel_path, full_path))
 
                 total = len(all_files)
                 emit_status(f"Found {total} reference files", 0, total)
 
-                for i, (filename, file_path) in enumerate(all_files, 1):
+                for i, (rel_path, file_path) in enumerate(all_files, 1):
+                    filename = os.path.basename(rel_path)
                     emit_status(f"Indexing {filename}...", i, total)
 
                     # Handle video files (extract audio first)
@@ -245,7 +249,12 @@ def index_reference_audio():
                                     continue
                                 
                                 extractor.extract_audio()
-                                fp = get_fingerprint_cached(temp_audio, fpcalc, app.config['FINGERPRINT_CACHE'])
+                                fp = get_fingerprint_cached(
+                                    temp_audio,
+                                    fpcalc,
+                                    app.config['FINGERPRINT_CACHE'],
+                                    cache_key_source=file_path,
+                                )
                                 
                                 # Try Shazam identification
                                 if local_use_shazam and fp is not None:
@@ -253,7 +262,7 @@ def index_reference_audio():
                                         import asyncio
                                         result = asyncio.run(shazam_client.identify(temp_audio))
                                         if result:
-                                            shazam_names[filename] = result.get_filename_base()
+                                            shazam_names[rel_path] = result.get_filename_base()
                                             emit_status(f"🎵 Shazam: {result.artist} - {result.title}", i, total)
                                     except Exception as e:
                                         print(f"Shazam error for {filename}: {e}")
@@ -269,14 +278,19 @@ def index_reference_audio():
                                 import asyncio
                                 result = asyncio.run(shazam_client.identify(file_path))
                                 if result:
-                                    shazam_names[filename] = result.get_filename_base()
+                                    shazam_names[rel_path] = result.get_filename_base()
                                     emit_status(f"🎵 Shazam: {result.artist} - {result.title}", i, total)
                             except Exception as e:
                                 print(f"Shazam error for {filename}: {e}")
 
                     if fp is not None and len(fp) > 0:
                         # Use Shazam name if available, otherwise use filename
-                        display_name = shazam_names.get(filename, filename)
+                        display_name = build_reference_label(
+                            rel_path,
+                            shazam_names.get(rel_path, filename),
+                            used_ref_labels
+                        )
+                        used_ref_labels.add(display_name.lower())
                         ref_fps[display_name] = np.unpackbits(fp.view(np.uint8))
 
                 reference_fingerprints = ref_fps
@@ -340,7 +354,7 @@ def match_videos():
 
     # Start matching in background thread
     def match_task():
-        global match_results, processing_status
+        global match_results, processing_status, reference_fingerprints
         
         local_use_shazam = use_shazam_fallback
 
@@ -394,7 +408,12 @@ def match_videos():
                             extractor.extract_audio()
 
                             # Get fingerprint
-                            q_fp = get_fingerprint(temp_wav, fpcalc)
+                            q_fp = get_fingerprint_cached(
+                                temp_wav,
+                                fpcalc,
+                                app.config['FINGERPRINT_CACHE'],
+                                cache_key_source=full_path,
+                            )
                             if q_fp is None or len(q_fp) == 0:
                                 emit_status(f"Fingerprint error for {f}", i, total)
                                 continue
@@ -527,8 +546,8 @@ def match_videos():
                                                     # Add to reference fingerprints immediately
                                                     saved_fp = get_fingerprint_cached(new_audio_path, fpcalc, app.config['FINGERPRINT_CACHE'])
                                                     if saved_fp is not None and len(saved_fp) > 0:
-                                                        ref_fps[os.path.basename(new_audio_path)] = np.unpackbits(saved_fp.view(np.uint8))
-                                                        reference_fingerprints = ref_fps  # Update global
+                                                        saved_name = os.path.basename(new_audio_path)
+                                                        reference_fingerprints[saved_name] = np.unpackbits(saved_fp.view(np.uint8))
                                                         emit_status(f"💾 Saved to reference library: {os.path.basename(new_audio_path)}", i, total)
                                                 except Exception as e:
                                                     emit_status(f"⚠️  Could not save audio: {e}", i, total)

@@ -1,10 +1,10 @@
 # ShortsSync
 
-**AI-Powered Audio Fingerprinting for Short-Form Video Management**
+**Audio Matching and Shazam-Powered Renaming for Short-Form Video Management**
 
-ShortsSync is a powerful automation platform that uses Chromaprint audio fingerprinting to automatically match and rename short-form videos based on their audio content. Available in GUI, CLI, and Web Interface modes, it's designed for content creators managing large libraries of TikTok, Instagram Reels, and YouTube Shorts.
+ShortsSync is a powerful automation platform that combines Chromaprint fingerprinting with Shazam-based identification to automatically match and rename short-form videos based on their audio content. Available in GUI, CLI, monitor, and web interface modes, it's designed for content creators managing large libraries of TikTok, Instagram Reels, and YouTube Shorts.
 
-**New Features:** 🎵 Shazam Integration | 🐌 Slowed Audio Support | 🧩 Modular Architecture
+**New Features:** 🎵 Shazam Integration | 🎯 Shazam-Only CLI Mode | 🐌 Slowed Audio Support | 🧩 Modular Architecture
 
 ---
 
@@ -13,15 +13,18 @@ ShortsSync is a powerful automation platform that uses Chromaprint audio fingerp
 ### Core Features
 - **🎵 Chromaprint Audio Fingerprinting**: Industry-standard audio matching with 100% accuracy
 - **🎤 Shazam Integration**: FREE song identification with smart caching
+- **🎯 Shazam-Only CLI Mode**: Rename directly from Shazam without indexing the reference library first
 - **🌐 Web Interface**: Modern browser-based UI with real-time updates
-- **🖥️ GUI & CLI Modes**: Choose between GUI, CLI, or web interface
+- **🖥️ GUI, CLI, Monitor, and Web Modes**: Choose the workflow that fits your batch or always-on setup
 - **📁 Recursive Directory Scanning**: Automatically finds audio/video files in nested folders
 - **🎬 Video-to-Audio Extraction**: Works with both audio files and video files
 - **🏷️ Smart Tagging System**: Automatically adds viral tags to renamed files
+- **👀 Monitor Mode**: Watch a folder and auto-process new videos as they arrive
 - **🔄 Duplicate Detection**: Find and manage duplicate audio files
+- **🎚️ Slowed Audio Matching**: Detect and label slowed variants with generated reference versions
 - **🎼 MP3 Conversion**: Automatically convert videos to MP3 audio files
 - **⚙️ Configurable Defaults**: Set your preferences once in `config.py`
-- **💾 Fingerprint Caching**: 100x faster startup with cached fingerprints
+- **💾 Fingerprint + Shazam Caching**: Faster repeat runs with cached fingerprints and Shazam results
 
 ### New in v2.0
 - **🎤 ShazamIO Integration**: Identify songs and get proper "Artist - Title" metadata
@@ -106,6 +109,9 @@ python cli.py -v /path/to/videos -a /path/to/audio
 # Use Shazam for song identification
 python cli.py --shazam
 
+# Use Shazam-only mode for renaming
+python cli.py --shazam-only
+
 # Handle slowed audio (0.7x)
 python cli.py -a /path/to/audio/slowed_versions/0.7x
 
@@ -162,10 +168,12 @@ Automated batch processing using settings from `config.py`.
 
 **Features:**
 - Runs entirely from command line
-- Uses Chromaprint for 100% accurate matching
-- **Shazam integration** for proper song titles
+- Fingerprint-first matching for reference-library workflows
+- **Shazam integration** for reference ID, fallback matching, and direct renaming
+- **Shazam-only mode** that skips reference indexing and renames straight from Shazam results
+- **Monitor mode** for continuously processing new uploads
 - Supports command-line arguments to override config
-- Interactive confirmation before renaming
+- Rename-audio helper for cleaning up reference libraries with Shazam metadata
 
 **Usage:**
 ```bash
@@ -178,6 +186,18 @@ python cli.py -v /path/to/videos -a /path/to/audio
 # Use Shazam to identify songs
 python cli.py --shazam
 
+# Rename directly from Shazam without indexing references
+python cli.py --shazam-only
+
+# Use Shazam as fallback for unmatched videos
+python cli.py --shazam-fallback
+
+# Continuously watch for new files
+python cli.py --monitor
+
+# Rename audio files in the library with Shazam metadata
+python cli.py --rename-audio --audio-dir /path/to/audio
+
 # Adjust matching threshold
 python cli.py --threshold 0.20
 
@@ -189,6 +209,11 @@ python cli.py --help
 - `-v, --video-dir`: Video source directory (overrides config.py)
 - `-a, --audio-dir`: Audio reference directory (overrides config.py)
 - `--shazam`: Use Shazam to identify songs
+- `--shazam-only`: Use Shazam for renaming without running Chromaprint first
+- `--shazam-fallback`: Use Shazam when fingerprint matching fails
+- `--shazam-fallback-any`: Use the raw Shazam result even when no library match exists
+- `--monitor`: Watch the video directory and auto-process new files
+- `--rename-audio`: Rename audio files in the reference library from Shazam metadata
 - `--threshold`: BER threshold for matching (default: 0.15)
 
 ---
@@ -284,6 +309,12 @@ DEFAULT_SETTINGS = {
     'fixed_tags': '#shorts',
     'pool_tags': '#fyp #viral #trending #foryou #reels',
     'preserve_exact_names': False,
+    'use_shazam': False,
+    'shazam_only_mode': False,
+    'use_shazam_fallback': True,
+    'shazam_fallback_any': True,
+    'save_new_audio': True,
+    'detect_slowed': True,
     'move_files': True,
 }
 ```
@@ -296,6 +327,8 @@ ShortsSync now includes **FREE** Shazam integration via ShazamIO!
 
 ### Features
 - 🎵 **Automatic Song ID**: Identify songs in your reference library
+- 🎯 **Shazam-Only Renaming**: Skip reference indexing and rename videos directly from Shazam
+- 🧭 **Fallback Matching**: Use Shazam when fingerprint matching misses
 - 💾 **Smart Caching**: Results cached in `.shazam_cache/` 
 - 🏷️ **Better Naming**: "Artist - Title" instead of filenames
 - 🆓 **Free**: No API key needed
@@ -303,14 +336,27 @@ ShortsSync now includes **FREE** Shazam integration via ShazamIO!
 ### Usage
 
 ```bash
-# CLI with Shazam
+# CLI with Shazam reference identification
 python cli.py --shazam
+
+# CLI with direct Shazam-based renaming
+python cli.py --shazam-only
+
+# CLI with fingerprint-first matching plus Shazam fallback
+python cli.py --shazam-fallback
 
 # find_unique with Shazam
 python find_unique.py /path/to/audio --shazam
 ```
 
 Or enable in the GUI by checking "Use Shazam to identify songs"
+
+### CLI Shazam Modes
+
+- `--shazam`: identify reference audio and keep the normal fingerprint-first rename flow
+- `--shazam-fallback`: keep fingerprint-first matching, then ask Shazam for unmatched videos
+- `--shazam-only`: skip reference indexing and rename videos directly from Shazam results
+- `--shazam-fallback-any`: allow direct Shazam naming when no reference-library match exists
 
 **[📖 Full Shazam Documentation →](docs/SHAZAM_INTEGRATION.md)**
 
@@ -419,6 +465,16 @@ python cli.py --shazam
 python cli.py -v /Users/you/Videos
 ```
 
+### Example 5: Direct Shazam Renaming
+
+```bash
+# Rename videos directly from Shazam metadata
+python cli.py --shazam-only -v /Users/you/Videos -a /Users/you/Music
+
+# Continuously watch an upload queue with the same mode
+python cli.py --monitor --shazam-only -v /Users/you/UploadQueue -a /Users/you/Music
+```
+
 ---
 
 ## 🎨 GUI Features
@@ -496,6 +552,10 @@ sudo apt install libchromaprint-tools
 ```bash
 pip install shazamio
 ```
+
+### "`--shazam-only` still asks for an audio directory"
+- `audio_dir` is still used as the save location when `save_new_audio` is enabled
+- Point it at your music/reference folder even when reference indexing is skipped
 
 ### "MoviePy errors"
 ```bash
