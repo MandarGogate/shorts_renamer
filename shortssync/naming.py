@@ -198,3 +198,37 @@ def generate_name_from_shazam(
         preserve_exact=False,
         max_length=max_length
     )
+
+
+def build_reference_label(
+    source_path: str,
+    preferred_name: Optional[str],
+    used_labels: Set[str]
+) -> str:
+    """
+    Build a readable, unique label for a reference track.
+
+    Recursive indexing can surface multiple files with the same basename or
+    Shazam-derived title. This helper preserves the first label as-is, then
+    appends parent folders only when needed to avoid silent overwrites.
+    """
+    label = (preferred_name or "").strip() or os.path.basename(source_path)
+
+    if label.lower() not in used_labels:
+        return label
+
+    parent = Path(source_path).parent
+    if parent != Path("."):
+        parts = parent.parts
+        for depth in range(1, len(parts) + 1):
+            context = Path(*parts[-depth:]).as_posix()
+            candidate = f"{label} [{context}]"
+            if candidate.lower() not in used_labels:
+                return candidate
+
+    for index in range(2, 1000):
+        candidate = f"{label} [{index}]"
+        if candidate.lower() not in used_labels:
+            return candidate
+
+    return f"{label} [{random.randint(1000, 9999)}]"

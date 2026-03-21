@@ -23,16 +23,22 @@ class FingerprintCache:
         self._metadata_file = self.cache_path / ".cache_metadata.json"
         self._metadata = self._load_metadata()
     
-    def _get_cache_key(self, file_path: str) -> str:
-        """Generate stable cache key using file path and modification time."""
+    def _normalize_cache_source(self, file_path: str, cache_key_source: Optional[str] = None) -> str:
+        """Normalize the file identity used for cache lookups."""
+        source_path = cache_key_source or file_path
+        return os.path.abspath(os.fspath(source_path))
+    
+    def _get_cache_key(self, file_path: str, cache_key_source: Optional[str] = None) -> str:
+        """Generate stable cache key using a source file path and modification time."""
+        source_path = self._normalize_cache_source(file_path, cache_key_source)
         try:
-            stat = os.stat(file_path)
-            # Use file path + mtime + size for unique key
-            key_data = f"{file_path}:{stat.st_mtime}:{stat.st_size}"
+            stat = os.stat(source_path)
+            # Use source path + mtime + size for a deterministic key
+            key_data = f"{source_path}:{stat.st_mtime}:{stat.st_size}"
             return hashlib.md5(key_data.encode()).hexdigest()
         except (OSError, IOError):
             # Fallback to path-only hash
-            return hashlib.md5(file_path.encode()).hexdigest()
+            return hashlib.md5(source_path.encode()).hexdigest()
     
     def _load_metadata(self) -> Dict:
         """Load cache metadata."""
@@ -52,17 +58,18 @@ class FingerprintCache:
         except IOError:
             pass
     
-    def get(self, file_path: str) -> Optional[np.ndarray]:
+    def get(self, file_path: str, cache_key_source: Optional[str] = None) -> Optional[np.ndarray]:
         """Get cached fingerprint if valid."""
-        cache_key = self._get_cache_key(file_path)
+        source_path = self._normalize_cache_source(file_path, cache_key_source)
+        cache_key = self._get_cache_key(file_path, cache_key_source)
         cache_file = self.cache_path / f"{cache_key}.npy"
         
         if not cache_file.exists():
             return None
         
         try:
-            # Verify file hasn't been modified
-            current_stat = os.stat(file_path)
+            # Verify the source file identity hasn't changed
+            current_stat = os.stat(source_path)
             cached_info = self._metadata.get(cache_key, {})
             
             if cached_info.get('mtime') == current_stat.st_mtime and \
@@ -75,20 +82,21 @@ class FingerprintCache:
         self._remove_cache_entry(cache_key)
         return None
     
-    def set(self, file_path: str, fingerprint: np.ndarray):
+    def set(self, file_path: str, fingerprint: np.ndarray, cache_key_source: Optional[str] = None):
         """Cache a fingerprint."""
-        cache_key = self._get_cache_key(file_path)
+        source_path = self._normalize_cache_source(file_path, cache_key_source)
+        cache_key = self._get_cache_key(file_path, cache_key_source)
         cache_file = self.cache_path / f"{cache_key}.npy"
         
         try:
             np.save(cache_file, fingerprint)
             
             # Update metadata
-            stat = os.stat(file_path)
+            stat = os.stat(source_path)
             self._metadata[cache_key] = {
                 'mtime': stat.st_mtime,
                 'size': stat.st_size,
-                'path': file_path,
+                'path': source_path,
                 'cached_at': time.time()
             }
             self._save_metadata()
@@ -202,7 +210,8 @@ def get_fingerprint_cached(
     path: str, 
     fpcalc_path: Optional[str] = None,
     cache_dir: str = ".fingerprints",
-    use_cache: bool = True
+    use_cache: bool = True,
+    cache_key_source: Optional[str] = None
 ) -> Optional[np.ndarray]:
     """
     Get fingerprint with caching support.
@@ -212,6 +221,7 @@ def get_fingerprint_cached(
         fpcalc_path: Path to fpcalc executable
         cache_dir: Directory for cache files
         use_cache: Whether to use caching
+        cache_key_source: Stable source path to cache against, useful for temp extracted audio
     
     Returns:
         Numpy array of fingerprint data or None on error
@@ -222,7 +232,7 @@ def get_fingerprint_cached(
     cache = get_cache(cache_dir)
     
     # Try cache first
-    cached = cache.get(path)
+    cached = cache.get(path, cache_key_source=cache_key_source)
     if cached is not None:
         return cached
     
@@ -230,7 +240,7 @@ def get_fingerprint_cached(
     fp = get_fingerprint(path, fpcalc_path)
     
     if fp is not None and len(fp) > 0:
-        cache.set(path, fp)
+        cache.set(path, fp, cache_key_source=cache_key_source)
     
     return fp
 

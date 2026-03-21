@@ -6,7 +6,7 @@ from .fingerprint import (
     get_fingerprint, get_fingerprint_cached, FingerprintCache,
     create_slowed_audio, get_slowed_fingerprint, generate_slowed_fingerprints
 )
-from .naming import generate_name, sanitize_filename
+from .naming import generate_name, sanitize_filename, build_reference_label
 from .shazam_client import ShazamClient, ShazamCache, is_shazam_available, identify_song, get_song_name
 from .utils import extract_audio_safe, get_fpcalc_path, VideoAudioExtractor
 from .rename_logger import RenameLogger, log_rename
@@ -21,6 +21,7 @@ __all__ = [
     'generate_slowed_fingerprints',
     'generate_name',
     'sanitize_filename',
+    'build_reference_label',
     'ShazamClient',
     'ShazamCache',
     'is_shazam_available',

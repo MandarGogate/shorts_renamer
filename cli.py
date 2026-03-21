@@ -22,6 +22,7 @@ from shortssync import (
     get_fingerprint_cached,
     generate_slowed_fingerprints,
     generate_name,
+    build_reference_label,
     get_fpcalc_path,
     VideoAudioExtractor,
     ShazamClient,
@@ -125,6 +126,111 @@ def rename_audio_command(args):
     print(f"Renamed: {renamed}, Skipped: {skipped}, Failed: {failed}")
 
 
+def word_match_score(a: str, b: str) -> float:
+    """Score word overlap between two strings."""
+    a_words = set(a.replace('_', ' ').replace('-', ' ').split())
+    b_words = set(b.replace('_', ' ').replace('-', ' ').split())
+    if not a_words or not b_words:
+        return 0.0
+    return len(a_words & b_words) / max(len(a_words), len(b_words))
+
+
+def find_best_reference_name(shazam_name: str, reference_names, min_score: float = 50.0):
+    """Match a Shazam result to the closest reference label."""
+    shazam_lower = shazam_name.lower()
+    shazam_parts = shazam_lower.split(' - ', 1)
+    shazam_artist = shazam_parts[0].strip() if len(shazam_parts) > 0 else ""
+    shazam_title = shazam_parts[1].strip() if len(shazam_parts) > 1 else ""
+
+    best_match = None
+    best_score = 0.0
+
+    for ref_name in reference_names:
+        ref_base = os.path.splitext(ref_name)[0].lower()
+
+        if shazam_lower in ref_base or ref_base in shazam_lower:
+            return ref_name, 100.0
+
+        ref_parts = ref_base.split(' - ', 1)
+        ref_artist = ref_parts[0].strip() if len(ref_parts) > 0 else ""
+        ref_title = ref_parts[1].strip() if len(ref_parts) > 1 else ""
+
+        artist_score = word_match_score(shazam_artist, ref_artist)
+        title_score = word_match_score(shazam_title, ref_title)
+        score = (artist_score * 0.3 + title_score * 0.7) * 100
+
+        if score > best_score and score >= min_score:
+            best_score = score
+            best_match = ref_name
+
+    return best_match, best_score
+
+
+def run_shazam_match(
+    audio_path: str,
+    shazam_client: ShazamClient,
+    reference_names,
+    video_name: str,
+    video_dir: str,
+    proposed_names: set,
+    fixed_tags: str,
+    pool_tags: str,
+    preserve_exact: bool,
+    shazam_fallback_any: bool
+) -> tuple:
+    """Use Shazam to identify audio and generate a proposed rename."""
+    try:
+        result = asyncio.run(shazam_client.identify(audio_path, timeout=30))
+    except Exception as exc:
+        return False, None, {'error': f'Shazam error: {exc}'}
+
+    if not result:
+        return False, None, {'error': 'Shazam could not identify audio'}
+
+    shazam_name = result.get_filename_base()
+    best_match, best_score = find_best_reference_name(shazam_name, reference_names)
+
+    if best_match:
+        new_name = generate_name(
+            ref_name=best_match,
+            vid_name=video_name,
+            vid_dir=video_dir,
+            used_names=proposed_names,
+            fixed_tags=fixed_tags,
+            pool_tags=pool_tags,
+            preserve_exact=preserve_exact
+        )
+        return True, new_name, {
+            'method': 'shazam',
+            'reference': best_match,
+            'ber': 0.0,
+            'shazam_name': shazam_name,
+            'similarity_score': best_score
+        }
+
+    if shazam_fallback_any:
+        new_name = generate_name(
+            ref_name=shazam_name,
+            vid_name=video_name,
+            vid_dir=video_dir,
+            used_names=proposed_names,
+            fixed_tags=fixed_tags,
+            pool_tags=pool_tags,
+            preserve_exact=preserve_exact
+        )
+        return True, new_name, {
+            'method': 'shazam_new',
+            'reference': shazam_name,
+            'ber': 0.0,
+            'shazam_name': shazam_name
+        }
+
+    return False, None, {
+        'error': f"Shazam found '{shazam_name}' but not in reference library",
+        'shazam_name': shazam_name
+    }
+
+
 def process_single_video(
     video_path: str,
     video_dir: str,
@@ -148,6 +254,7 @@ def process_single_video(
     fixed_tags = config.get('fixed_tags', '#shorts')
     pool_tags = config.get('pool_tags', '#fyp #viral #trending')
     preserve_exact = config.get('preserve_exact_names', False)
+    shazam_only_mode = config.get('shazam_only_mode', False)
     use_shazam_fallback = config.get('use_shazam_fallback', False)
     shazam_fallback_any = config.get('shazam_fallback_any', False)
     shazam_fallback_client = config.get('shazam_fallback_client', None)
@@ -165,156 +272,91 @@ def process_single_video(
                 return False, None, {'error': 'No audio track'}
             
             extractor.extract_audio()
-            
-            q_fp = get_fingerprint_cached(temp_wav.name, fpcalc)
-            if q_fp is None or len(q_fp) == 0:
-                return False, None, {'error': 'Fingerprint error'}
-            
-            q_bits = np.unpackbits(q_fp.view(np.uint8))
-            n_q = len(q_bits)
-            
+
             best_ber = 1.0
-            best_ref = None
-            
-            for ref_name, r_bits in ref_fps.items():
-                n_r = len(r_bits)
-                if n_q > n_r:
-                    continue
-                
-                n_windows = (n_r // 32) - len(q_fp) + 1
-                if n_windows < 1:
-                    continue
-                
-                min_dist = float('inf')
-                for w in range(n_windows):
-                    start = w * 32
-                    end = start + n_q
-                    sub_r = r_bits[start:end]
-                    dist = np.count_nonzero(np.bitwise_xor(q_bits, sub_r))
-                    if dist < min_dist:
-                        min_dist = dist
-                        if min_dist == 0:
+
+            if not shazam_only_mode:
+                q_fp = get_fingerprint_cached(temp_wav.name, fpcalc, cache_key_source=video_path)
+                if q_fp is None or len(q_fp) == 0:
+                    return False, None, {'error': 'Fingerprint error'}
+
+                q_bits = np.unpackbits(q_fp.view(np.uint8))
+                n_q = len(q_bits)
+
+                best_ref = None
+
+                for ref_name, r_bits in ref_fps.items():
+                    n_r = len(r_bits)
+                    if n_q > n_r:
+                        continue
+
+                    n_windows = (n_r // 32) - len(q_fp) + 1
+                    if n_windows < 1:
+                        continue
+
+                    min_dist = float('inf')
+                    for w in range(n_windows):
+                        start = w * 32
+                        end = start + n_q
+                        sub_r = r_bits[start:end]
+                        dist = np.count_nonzero(np.bitwise_xor(q_bits, sub_r))
+                        if dist < min_dist:
+                            min_dist = dist
+                            if min_dist == 0:
+                                break
+
+                    ber = min_dist / n_q if n_q > 0 else 1.0
+                    if ber < best_ber:
+                        best_ber = ber
+                        best_ref = ref_name
+                        if best_ber == 0:
                             break
-                
-                ber = min_dist / n_q if n_q > 0 else 1.0
-                if ber < best_ber:
-                    best_ber = ber
-                    best_ref = ref_name
-                    if best_ber == 0:
-                        break
-            
-            if best_ref and best_ber < threshold:
-                is_slowed = '[SLOWED' in best_ref
-                slowed_speed = None
-                if is_slowed:
-                    speed_match = re.search(r'\[SLOWED ([\d.]+)x\]', best_ref)
-                    if speed_match:
-                        slowed_speed = float(speed_match.group(1))
-                
-                match_info = {
-                    'method': 'slowed' if is_slowed else 'chromaprint',
-                    'reference': best_ref,
-                    'ber': best_ber,
-                    'is_slowed': is_slowed,
-                    'slowed_speed': slowed_speed
-                }
-                
-                new_name = generate_name(
-                    ref_name=best_ref,
-                    vid_name=filename,
-                    vid_dir=video_dir,
-                    used_names=proposed_names,
+
+                if best_ref and best_ber < threshold:
+                    is_slowed = '[SLOWED' in best_ref
+                    slowed_speed = None
+                    if is_slowed:
+                        speed_match = re.search(r'\[SLOWED ([\d.]+)x\]', best_ref)
+                        if speed_match:
+                            slowed_speed = float(speed_match.group(1))
+
+                    match_info = {
+                        'method': 'slowed' if is_slowed else 'chromaprint',
+                        'reference': best_ref,
+                        'ber': best_ber,
+                        'is_slowed': is_slowed,
+                        'slowed_speed': slowed_speed
+                    }
+
+                    new_name = generate_name(
+                        ref_name=best_ref,
+                        vid_name=filename,
+                        vid_dir=video_dir,
+                        used_names=proposed_names,
+                        fixed_tags=fixed_tags,
+                        pool_tags=pool_tags,
+                        preserve_exact=preserve_exact
+                    )
+
+                    return True, new_name, match_info
+
+            if use_shazam_fallback and shazam_fallback_client:
+                return run_shazam_match(
+                    audio_path=temp_wav.name,
+                    shazam_client=shazam_fallback_client,
+                    reference_names=ref_fps.keys(),
+                    video_name=filename,
+                    video_dir=video_dir,
+                    proposed_names=proposed_names,
                     fixed_tags=fixed_tags,
                     pool_tags=pool_tags,
-                    preserve_exact=preserve_exact
+                    preserve_exact=preserve_exact,
+                    shazam_fallback_any=shazam_fallback_any
                 )
-                
-                return True, new_name, match_info
-            
-            # Try Shazam fallback if no match
-            if use_shazam_fallback and shazam_fallback_client:
-                try:
-                    result = asyncio.run(shazam_fallback_client.identify(temp_wav.name, timeout=30))
-                    
-                    if result:
-                        shazam_name = result.get_filename_base()
-                        
-                        # Look for match in reference library by name
-                        shazam_lower = shazam_name.lower()
-                        shazam_parts = shazam_lower.split(' - ', 1)
-                        shazam_artist = shazam_parts[0].strip() if len(shazam_parts) > 0 else ""
-                        shazam_title = shazam_parts[1].strip() if len(shazam_parts) > 1 else ""
-                        
-                        def word_match_score(a, b):
-                            a_words = set(a.replace('_', ' ').replace('-', ' ').split())
-                            b_words = set(b.replace('_', ' ').replace('-', ' ').split())
-                            if not a_words or not b_words:
-                                return 0
-                            return len(a_words & b_words) / max(len(a_words), len(b_words))
-                        
-                        best_match = None
-                        best_score = 0
-                        
-                        for ref_name in ref_fps.keys():
-                            ref_base = os.path.splitext(ref_name)[0].lower()
-                            
-                            if shazam_lower in ref_base or ref_base in shazam_lower:
-                                best_match = ref_name
-                                best_score = 100
-                                break
-                            
-                            ref_parts = ref_base.split(' - ', 1)
-                            ref_artist = ref_parts[0].strip() if len(ref_parts) > 0 else ""
-                            ref_title = ref_parts[1].strip() if len(ref_parts) > 1 else ""
-                            
-                            artist_score = word_match_score(shazam_artist, ref_artist)
-                            title_score = word_match_score(shazam_title, ref_title)
-                            score = (artist_score * 0.3 + title_score * 0.7) * 100
-                            
-                            if score > best_score and score >= 50:
-                                best_score = score
-                                best_match = ref_name
-                        
-                        if best_match:
-                            new_name = generate_name(
-                                ref_name=best_match,
-                                vid_name=filename,
-                                vid_dir=video_dir,
-                                used_names=proposed_names,
-                                fixed_tags=fixed_tags,
-                                pool_tags=pool_tags,
-                                preserve_exact=preserve_exact
-                            )
-                            match_info = {
-                                'method': 'shazam',
-                                'reference': best_match,
-                                'ber': 0.0,
-                                'shazam_name': shazam_name,
-                                'similarity_score': best_score
-                            }
-                            return True, new_name, match_info
-                        
-                        elif shazam_fallback_any:
-                            new_name = generate_name(
-                                ref_name=shazam_name,
-                                vid_name=filename,
-                                vid_dir=video_dir,
-                                used_names=proposed_names,
-                                fixed_tags=fixed_tags,
-                                pool_tags=pool_tags,
-                                preserve_exact=preserve_exact
-                            )
-                            match_info = {
-                                'method': 'shazam_new',
-                                'reference': shazam_name,
-                                'ber': 0.0,
-                                'shazam_name': shazam_name
-                            }
-                            return True, new_name, match_info
-                        
-                except Exception:
-                    pass
-            
+
+            if shazam_only_mode:
+                return False, None, {'error': 'Shazam-only mode requires an active Shazam client'}
+
             return False, None, {'error': f'No match (best BER: {best_ber:.3f})'}
             
     finally:
@@ -344,12 +386,19 @@ def monitor_mode(args, defaults):
         print(f"❌ Error: Audio directory not found: {audio_dir}")
         sys.exit(1)
     
-    # Check fpcalc
-    fpcalc = get_fpcalc_path()
-    if not fpcalc:
-        print("\n❌ Error: fpcalc not found.")
-        print("Install with: brew install chromaprint")
-        sys.exit(1)
+    shazam_only_mode = (
+        args.shazam_only
+        if args.shazam_only is not None
+        else defaults.get('shazam_only_mode', False)
+    )
+
+    fpcalc = None
+    if not shazam_only_mode:
+        fpcalc = get_fpcalc_path()
+        if not fpcalc:
+            print("\n❌ Error: fpcalc not found.")
+            print("Install with: brew install chromaprint")
+            sys.exit(1)
     
     # Load config
     threshold = args.threshold
@@ -357,105 +406,142 @@ def monitor_mode(args, defaults):
     pool_tags = defaults.get('pool_tags', '#fyp #viral #trending')
     preserve_exact = defaults.get('preserve_exact_names', False)
     move_files = defaults.get('move_files', False)
-    detect_slowed = defaults.get('detect_slowed', False)
+    detect_slowed = defaults.get('detect_slowed', False) and not shazam_only_mode
     slowed_speeds = defaults.get('slowed_speeds', [0.8, 0.7])
     
     # Shazam settings
-    use_shazam_fallback = defaults.get('use_shazam_fallback', False) and is_shazam_available()
-    shazam_fallback_any = defaults.get('shazam_fallback_any', False)
+    use_shazam = (not shazam_only_mode and defaults.get('use_shazam', False)) and is_shazam_available()
+    use_shazam_fallback = (shazam_only_mode or defaults.get('use_shazam_fallback', False)) and is_shazam_available()
+    shazam_fallback_any = True if shazam_only_mode else defaults.get('shazam_fallback_any', False)
     save_new_audio = defaults.get('save_new_audio', False)
+
+    if shazam_only_mode and not is_shazam_available():
+        print("\n❌ Error: --shazam-only requires shazamio.")
+        print("Install with: pip install shazamio")
+        sys.exit(1)
     
     print("=" * 60)
     print("🎬 ShortsSync Monitor Mode")
     print("=" * 60)
     print(f"📁 Watching: {video_dir}")
     print(f"⏱️  Interval: {interval}s")
+    print(f"🎯 Match mode: {'Shazam only' if shazam_only_mode else 'Fingerprint first'}")
     print(f"🎯 BER Threshold: {threshold}")
     print()
     print("Press Ctrl+C to stop monitoring")
     print("=" * 60)
     
-    # Build/load reference index
-    print("\n📚 Loading reference index...")
-    index_cache = ReferenceIndexCache()
-    config_for_cache = {
-        'detect_slowed': detect_slowed,
-        'slowed_speeds': slowed_speeds
-    }
-    
     ref_fps = {}
-    shazam_names = {}
-    audio_exts = ('.mp3', '.wav', '.m4a', '.flac', '.ogg')
     video_exts = ('.mp4', '.mov', '.mkv')
-    
-    use_cached_index = False
-    if not args.reindex:
-        try:
-            if index_cache.is_cache_valid(audio_dir, config_for_cache):
-                print("📦 Using cached reference index")
-                cached = index_cache.load_index()
-                if cached:
-                    ref_fps, shazam_names = cached
-                    print(f"✅ Loaded {len(ref_fps)} fingerprints")
-                    use_cached_index = True
-        except Exception as e:
-            print(f"⚠️  Cache check failed: {e}")
-    
-    if not use_cached_index:
-        print("🔄 Building index...")
-        # Simple index build (just fingerprints, no Shazam for now)
-        all_files = []
-        for root, dirs, files in os.walk(audio_dir):
-            # Skip hidden directories
-            dirs[:] = [d for d in dirs if not d.startswith('.')]
-            for f in files:
-                # Skip temporary files
-                if f.startswith('._temp_') or f.startswith('.temp_'):
-                    continue
-                if f.lower().endswith(audio_exts) or f.lower().endswith(video_exts):
-                    rel_path = os.path.relpath(os.path.join(root, f), audio_dir)
-                    all_files.append(rel_path)
-        
-        for i, rel_path in enumerate(all_files, 1):
-            file_path = os.path.join(audio_dir, rel_path)
-            filename = os.path.basename(rel_path)
-            
-            if rel_path.lower().endswith(video_exts):
-                temp_audio = os.path.join(audio_dir, f".temp_ref_audio_{i}.wav")
-                try:
-                    with VideoAudioExtractor(file_path, temp_audio) as extractor:
-                        if extractor.has_audio:
-                            extractor.extract_audio()
-                            fp = get_fingerprint_cached(temp_audio, fpcalc)
-                            if fp is not None and len(fp) > 0:
-                                ref_fps[filename] = np.unpackbits(fp.view(np.uint8))
-                except Exception:
-                    pass
-                finally:
+    if shazam_only_mode:
+        print("\n📚 Reference index")
+        print("⏭️  Skipping reference indexing in Shazam-only mode")
+    else:
+        print("\n📚 Loading reference index...")
+        index_cache = ReferenceIndexCache()
+        config_for_cache = {
+            'detect_slowed': detect_slowed,
+            'slowed_speeds': slowed_speeds
+        }
+        shazam_names = {}
+        used_ref_labels = set()
+        audio_exts = ('.mp3', '.wav', '.m4a', '.flac', '.ogg')
+
+        use_cached_index = False
+        if not args.reindex:
+            try:
+                if index_cache.is_cache_valid(audio_dir, config_for_cache):
+                    print("📦 Using cached reference index")
+                    cached = index_cache.load_index()
+                    if cached:
+                        ref_fps, shazam_names = cached
+                        print(f"✅ Loaded {len(ref_fps)} fingerprints")
+                        use_cached_index = True
+            except Exception as e:
+                print(f"⚠️  Cache check failed: {e}")
+
+        reference_shazam_client = None
+        if use_shazam:
+            try:
+                reference_shazam_client = ShazamClient()
+            except Exception as e:
+                print(f"⚠️  Shazam init failed for reference indexing: {e}")
+                use_shazam = False
+
+        if not use_cached_index:
+            print("🔄 Building index...")
+            all_files = []
+            for root, dirs, files in os.walk(audio_dir):
+                # Skip hidden directories
+                dirs[:] = [d for d in dirs if not d.startswith('.')]
+                for f in files:
+                    # Skip temporary files
+                    if f.startswith('._temp_') or f.startswith('.temp_'):
+                        continue
+                    if f.lower().endswith(audio_exts) or f.lower().endswith(video_exts):
+                        rel_path = os.path.relpath(os.path.join(root, f), audio_dir)
+                        all_files.append(rel_path)
+
+            for i, rel_path in enumerate(all_files, 1):
+                file_path = os.path.join(audio_dir, rel_path)
+                filename = os.path.basename(rel_path)
+
+                if rel_path.lower().endswith(video_exts):
+                    temp_audio = os.path.join(audio_dir, f".temp_ref_audio_{i}.wav")
                     try:
-                        if os.path.exists(temp_audio):
-                            os.remove(temp_audio)
-                    except OSError:
-                        pass
-            else:
-                fp = get_fingerprint_cached(file_path, fpcalc)
+                        with VideoAudioExtractor(file_path, temp_audio) as extractor:
+                            if not extractor.has_audio:
+                                print("    ⚠️  No audio track")
+                                continue
+
+                            extractor.extract_audio()
+                            fp = get_fingerprint_cached(temp_audio, fpcalc, cache_key_source=file_path)
+
+                            if use_shazam and reference_shazam_client:
+                                try:
+                                    result = asyncio.run(reference_shazam_client.identify(temp_audio, timeout=30))
+                                    if result:
+                                        shazam_names[rel_path] = result.get_filename_base()
+                                        print(f"    🎵 Shazam: {result.artist} - {result.title}")
+                                except Exception as e:
+                                    print(f"    ⚠️  Shazam error: {e}")
+                    except Exception as e:
+                        print(f"    ⚠️  Error extracting audio: {e}")
+                        continue
+                else:
+                    fp = get_fingerprint_cached(file_path, fpcalc)
+
+                    if use_shazam and reference_shazam_client:
+                        try:
+                            result = asyncio.run(reference_shazam_client.identify(file_path, timeout=30))
+                            if result:
+                                shazam_names[rel_path] = result.get_filename_base()
+                                print(f"    🎵 Shazam: {result.artist} - {result.title}")
+                        except Exception as e:
+                            print(f"    ⚠️  Shazam error: {e}")
+
                 if fp is not None and len(fp) > 0:
-                    ref_fps[filename] = np.unpackbits(fp.view(np.uint8))
-            
-            # Generate slowed fingerprints
-            if detect_slowed and rel_path.lower().endswith(audio_exts):
-                try:
-                    slowed_fps = generate_slowed_fingerprints(file_path, slowed_speeds, fpcalc, audio_dir)
-                    for speed, slowed_fp in slowed_fps.items():
-                        if slowed_fp is not None and len(slowed_fp) > 0:
-                            slowed_name = f"{filename} [SLOWED {speed}x]"
-                            ref_fps[slowed_name] = np.unpackbits(slowed_fp.view(np.uint8))
-                except Exception:
-                    pass
-        
-        if ref_fps:
-            index_cache.save_index(audio_dir, ref_fps, shazam_names, config_for_cache)
-        print(f"✅ Indexed {len(ref_fps)} tracks")
+                    display_name = build_reference_label(
+                        rel_path,
+                        shazam_names.get(rel_path, filename),
+                        used_ref_labels
+                    )
+                    used_ref_labels.add(display_name.lower())
+                    ref_fps[display_name] = np.unpackbits(fp.view(np.uint8))
+
+                    if detect_slowed and rel_path.lower().endswith(audio_exts):
+                        try:
+                            slowed_fps = generate_slowed_fingerprints(file_path, slowed_speeds, fpcalc, audio_dir)
+                            for speed, slowed_fp in slowed_fps.items():
+                                if slowed_fp is not None and len(slowed_fp) > 0:
+                                    slowed_name = f"{display_name} [SLOWED {speed}x]"
+                                    ref_fps[slowed_name] = np.unpackbits(slowed_fp.view(np.uint8))
+                        except Exception as e:
+                            print(f"    ⚠️  Slowed fingerprint error: {e}")
+
+            if ref_fps:
+                index_cache.save_index(audio_dir, ref_fps, shazam_names, config_for_cache)
+            print(f"✅ Indexed {len(ref_fps)} tracks")
     
     # Initialize Shazam client if needed
     shazam_fallback_client = None
@@ -543,6 +629,7 @@ def monitor_mode(args, defaults):
                     'pool_tags': pool_tags,
                     'preserve_exact_names': preserve_exact,
                     'use_shazam_fallback': use_shazam_fallback,
+                    'shazam_only_mode': shazam_only_mode,
                     'shazam_fallback_any': shazam_fallback_any,
                     'shazam_fallback_client': shazam_fallback_client,
                     'save_new_audio': save_new_audio,
@@ -610,6 +697,7 @@ Examples:
   python cli.py
   python cli.py --video-dir /path/to/videos --audio-dir /path/to/audio
   python cli.py -v /path/to/videos -a /path/to/audio --shazam
+  python cli.py -v /path/to/videos -a /path/to/audio --shazam-only
   python cli.py --rename-audio --audio-dir /path/to/audio --dry-run
   
 Monitor Mode (auto-process new files):
@@ -625,6 +713,8 @@ Monitor Mode (auto-process new files):
                        help='Preview changes without renaming (use with --rename-audio)')
     parser.add_argument('--shazam', action='store_true', default=None, help='Use Shazam to identify reference audio files during indexing (overrides config)')
     parser.add_argument('--no-shazam', dest='shazam', action='store_false', default=None, help='Disable Shazam for reference audio identification')
+    parser.add_argument('--shazam-only', action='store_true', dest='shazam_only', default=None, help='Use Shazam for renaming without running Chromaprint matching first')
+    parser.add_argument('--no-shazam-only', dest='shazam_only', action='store_false', default=None, help='Disable Shazam-only renaming mode')
     parser.add_argument('--shazam-fallback', action='store_true', default=None, help='Use Shazam as fallback for unmatched videos (overrides config)')
     parser.add_argument('--no-shazam-fallback', dest='shazam_fallback', action='store_false', default=None, help='Disable Shazam fallback for unmatched videos')
     parser.add_argument('--save-new-audio', action='store_true', default=None, help='Save Shazam-identified audio to reference library (overrides config)')
@@ -723,14 +813,6 @@ Monitor Mode (auto-process new files):
     print("ShortsSync CLI - Chromaprint Audio Matcher")
     print("=" * 60)
     
-    # Check fpcalc
-    fpcalc = get_fpcalc_path()
-    
-    if not fpcalc:
-        print("\n❌ Error: fpcalc not found.")
-        print("Install with: brew install chromaprint")
-        sys.exit(1)
-    
     # Load config
     try:
         defaults = config.get_defaults()
@@ -767,15 +849,21 @@ Monitor Mode (auto-process new files):
     
     # Check Shazam availability - use CLI args if provided, otherwise fall back to config
     use_shazam_config = defaults.get('use_shazam', False)
+    shazam_only_mode_config = defaults.get('shazam_only_mode', False)
     use_shazam_fallback_config = defaults.get('use_shazam_fallback', False)
     save_new_audio_config = defaults.get('save_new_audio', False)
     shazam_fallback_any_config = defaults.get('shazam_fallback_any', False)
-    
-    use_shazam = (args.shazam if args.shazam is not None else use_shazam_config) and is_shazam_available()
-    use_shazam_fallback = (args.shazam_fallback if args.shazam_fallback is not None else use_shazam_fallback_config) and is_shazam_available()
+
+    shazam_only_mode = args.shazam_only if args.shazam_only is not None else shazam_only_mode_config
+
+    use_shazam_requested = (not shazam_only_mode) and (args.shazam if args.shazam is not None else use_shazam_config)
+    use_shazam_fallback_requested = shazam_only_mode or (args.shazam_fallback if args.shazam_fallback is not None else use_shazam_fallback_config)
+
+    use_shazam = use_shazam_requested and is_shazam_available()
+    use_shazam_fallback = use_shazam_fallback_requested and is_shazam_available()
     save_new_audio = (args.save_new_audio if args.save_new_audio is not None else save_new_audio_config) and is_shazam_available()
-    shazam_fallback_any = (args.shazam_fallback_any if args.shazam_fallback_any is not None else shazam_fallback_any_config)
-    detect_slowed = defaults.get('detect_slowed', False)
+    shazam_fallback_any = True if shazam_only_mode else (args.shazam_fallback_any if args.shazam_fallback_any is not None else shazam_fallback_any_config)
+    detect_slowed = defaults.get('detect_slowed', False) and not shazam_only_mode
     slowed_speeds = defaults.get('slowed_speeds', [0.8, 0.7])
     
     # Initialize rename logger
@@ -783,16 +871,30 @@ Monitor Mode (auto-process new files):
     rename_logger = RenameLogger(rename_log_file)
     
     # Warn if Shazam is requested (via args or config) but not available
-    shazam_requested = (args.shazam if args.shazam is not None else use_shazam_config) or \
+    shazam_requested = shazam_only_mode or \
+                       (args.shazam if args.shazam is not None else use_shazam_config) or \
                        (args.shazam_fallback if args.shazam_fallback is not None else use_shazam_fallback_config) or \
                        (args.save_new_audio if args.save_new_audio is not None else save_new_audio_config) or \
                        (args.shazam_fallback_any if args.shazam_fallback_any is not None else shazam_fallback_any_config)
     if shazam_requested and not is_shazam_available():
+        if shazam_only_mode:
+            print("\n❌ Error: --shazam-only requires shazamio.")
+            print("Install with: pip install shazamio")
+            sys.exit(1)
         print("\n⚠️  Warning: Shazam requested but shazamio not installed.")
         print("   Install with: pip install shazamio")
+
+    fpcalc = None
+    if not shazam_only_mode:
+        fpcalc = get_fpcalc_path()
+        if not fpcalc:
+            print("\n❌ Error: fpcalc not found.")
+            print("Install with: brew install chromaprint")
+            sys.exit(1)
     
     print(f"\n📁 Video Source: {video_dir}")
     print(f"🎵 Audio Reference: {audio_dir}")
+    print(f"🎯 Match Mode: {'Shazam only' if shazam_only_mode else 'Fingerprint first'}")
     print(f"🏷️  Fixed Tags: {fixed_tags}")
     print(f"🎲 Random Tags: {pool_tags}")
     print(f"📦 Move to _Ready: {move_files}")
@@ -814,140 +916,181 @@ Monitor Mode (auto-process new files):
             shazam_client = ShazamClient()
             print("✅ Shazam client initialized")
         except Exception as e:
+            if shazam_only_mode:
+                print(f"\n❌ Error: could not initialize Shazam: {e}")
+                sys.exit(1)
             print(f"⚠️  Shazam init failed: {e}")
             use_shazam = False
     
     # Index reference audio
-    print("\n" + "=" * 60)
-    print("Indexing Reference Audio...")
-    print("=" * 60)
-    
     ref_fps = {}
-    shazam_names = {}  # Maps original filename to Shazam-identified name
-    audio_exts = ('.mp3', '.wav', '.m4a', '.flac', '.ogg')
-    video_exts = ('.mp4', '.mov', '.mkv')
-    
-    # Check if we have a valid cached index
-    index_cache = ReferenceIndexCache()
-    config_for_cache = {
-        'detect_slowed': detect_slowed,
-        'slowed_speeds': slowed_speeds
-    }
-    
-    use_cached_index = False
-    if not args.reindex:
-        try:
-            if index_cache.is_cache_valid(audio_dir, config_for_cache):
-                print("📦 Using cached reference index (no changes detected)")
-                cached = index_cache.load_index()
-                if cached:
-                    ref_fps, shazam_names = cached
-                    print(f"✅ Loaded {len(ref_fps)} fingerprints from cache")
-                    use_cached_index = True
-        except Exception as e:
-            print(f"⚠️  Cache check failed: {e}")
+    if shazam_only_mode:
+        print("\n" + "=" * 60)
+        print("Reference Audio")
+        print("=" * 60)
+        print("⏭️  Skipping reference indexing in Shazam-only mode")
     else:
-        print("🔄 Force re-index requested (--reindex)")
-    
-    if not use_cached_index:
-        print("🔄 Building reference index...")
-        try:
-            # Full indexing needed
-            all_files = []
-            for root, dirs, files in os.walk(audio_dir):
-                # Skip hidden directories
-                dirs[:] = [d for d in dirs if not d.startswith('.')]
-                for f in files:
-                    # Skip temporary files
-                    if f.startswith('._temp_') or f.startswith('.temp_'):
+        print("\n" + "=" * 60)
+        print("Indexing Reference Audio...")
+        print("=" * 60)
+
+        shazam_names = {}  # Maps original relative path to Shazam-identified name
+        used_ref_labels = set()
+        audio_exts = ('.mp3', '.wav', '.m4a', '.flac', '.ogg')
+        video_exts = ('.mp4', '.mov', '.mkv')
+
+        index_cache = ReferenceIndexCache()
+        config_for_cache = {
+            'detect_slowed': detect_slowed,
+            'slowed_speeds': slowed_speeds
+        }
+
+        use_cached_index = False
+        if not args.reindex:
+            try:
+                if index_cache.is_cache_valid(audio_dir, config_for_cache):
+                    print("📦 Using cached reference index (no changes detected)")
+                    cached = index_cache.load_index()
+                    if cached:
+                        ref_fps, shazam_names = cached
+                        print(f"✅ Loaded {len(ref_fps)} fingerprints from cache")
+                        use_cached_index = True
+            except Exception as e:
+                print(f"⚠️  Cache check failed: {e}")
+        else:
+            print("🔄 Force re-index requested (--reindex)")
+            index_cache.clear_checkpoint()
+
+        if not use_cached_index:
+            print("🔄 Building reference index...")
+            try:
+                all_files = []
+                for root, dirs, files in os.walk(audio_dir):
+                    dirs[:] = [d for d in dirs if not d.startswith('.')]
+                    for f in files:
+                        if f.startswith('._temp_') or f.startswith('.temp_'):
+                            continue
+                        if f.lower().endswith(audio_exts) or f.lower().endswith(video_exts):
+                            rel_path = os.path.relpath(os.path.join(root, f), audio_dir)
+                            all_files.append(rel_path)
+
+                audio_count = sum(1 for f in all_files if f.lower().endswith(audio_exts))
+                video_count = sum(1 for f in all_files if f.lower().endswith(video_exts))
+                print(f"Found {audio_count} audio files and {video_count} video files (including nested)")
+
+                completed_files = []
+                checkpoint = index_cache.load_checkpoint(audio_dir, config_for_cache, all_files)
+                if checkpoint:
+                    ref_fps, shazam_names, completed_files = checkpoint
+                    used_ref_labels = {label.lower() for label in ref_fps.keys()}
+                    print(f"📦 Resuming cached index build from {len(completed_files)}/{len(all_files)} source files")
+
+                completed_file_set = set(completed_files)
+
+                for rel_path in all_files:
+                    if rel_path in completed_file_set:
                         continue
-                    if f.lower().endswith(audio_exts) or f.lower().endswith(video_exts):
-                        rel_path = os.path.relpath(os.path.join(root, f), audio_dir)
-                        all_files.append(rel_path)
-            
-            audio_count = sum(1 for f in all_files if f.lower().endswith(audio_exts))
-            video_count = sum(1 for f in all_files if f.lower().endswith(video_exts))
-            print(f"Found {audio_count} audio files and {video_count} video files (including nested)")
-            
-            for i, rel_path in enumerate(all_files, 1):
-                print(f"  [{i}/{len(all_files)}] {rel_path}")
-                file_path = os.path.join(audio_dir, rel_path)
-                filename = os.path.basename(rel_path)
-                
-                # If it's a video file, extract audio first
-                if rel_path.lower().endswith(video_exts):
-                    temp_audio = os.path.join(audio_dir, f".temp_ref_audio_{i}.wav")
+
+                    current_index = len(completed_files) + 1
+                    total_files = len(all_files)
+                    print(f"  [{current_index}/{total_files}] {rel_path}")
+                    file_path = os.path.join(audio_dir, rel_path)
+                    filename = os.path.basename(rel_path)
+
+                    fp = None
                     try:
-                        with VideoAudioExtractor(file_path, temp_audio) as extractor:
-                            if not extractor.has_audio:
-                                print("    ⚠️  No audio track")
-                                continue
-                            
-                            extractor.extract_audio()
-                            fp = get_fingerprint_cached(temp_audio, fpcalc)
-                            
-                            # Try Shazam identification
-                            if use_shazam and fp is not None:
+                        if rel_path.lower().endswith(video_exts):
+                            temp_audio = os.path.join(audio_dir, f".temp_ref_audio_{current_index}.wav")
+                            try:
+                                with VideoAudioExtractor(file_path, temp_audio) as extractor:
+                                    if not extractor.has_audio:
+                                        print("    ⚠️  No audio track")
+                                    else:
+                                        extractor.extract_audio()
+                                        fp = get_fingerprint_cached(temp_audio, fpcalc, cache_key_source=file_path)
+
+                                        if use_shazam and shazam_client:
+                                            try:
+                                                result = asyncio.run(shazam_client.identify(temp_audio, timeout=30))
+                                                if result:
+                                                    shazam_names[rel_path] = result.get_filename_base()
+                                                    print(f"    🎵 Shazam: {result.artist} - {result.title}")
+                                            except Exception as e:
+                                                print(f"    ⚠️  Shazam error: {e}")
+                            except Exception as e:
+                                print(f"    ⚠️  Error extracting audio: {e}")
+                        else:
+                            fp = get_fingerprint_cached(file_path, fpcalc)
+
+                            if use_shazam and shazam_client:
                                 try:
-                                    result = asyncio.run(shazam_client.identify(temp_audio, timeout=30))
+                                    result = asyncio.run(shazam_client.identify(file_path, timeout=30))
                                     if result:
-                                        shazam_names[filename] = result.get_filename_base()
+                                        shazam_names[rel_path] = result.get_filename_base()
                                         print(f"    🎵 Shazam: {result.artist} - {result.title}")
                                 except Exception as e:
                                     print(f"    ⚠️  Shazam error: {e}")
-                    except Exception as e:
-                        print(f"    ⚠️  Error extracting audio: {e}")
-                        continue
-                else:
-                    fp = get_fingerprint_cached(file_path, fpcalc)
-                    
-                    # Try Shazam identification for audio files too
-                    if use_shazam and fp is not None:
-                        try:
-                            result = asyncio.run(shazam_client.identify(file_path, timeout=30))
-                            if result:
-                                shazam_names[filename] = result.get_filename_base()
-                                print(f"    🎵 Shazam: {result.artist} - {result.title}")
-                        except Exception as e:
-                            print(f"    ⚠️  Shazam error: {e}")
-                
-                if fp is not None and len(fp) > 0:
-                    # Use Shazam name if available, otherwise use filename
-                    display_name = shazam_names.get(filename, filename)
-                    ref_fps[display_name] = np.unpackbits(fp.view(np.uint8))
-                    
-                    # Generate slowed fingerprints for detection
-                    if detect_slowed and rel_path.lower().endswith(audio_exts):
-                        try:
-                            slowed_fps = generate_slowed_fingerprints(file_path, slowed_speeds, fpcalc, audio_dir)
-                            for speed, slowed_fp in slowed_fps.items():
-                                if slowed_fp is not None and len(slowed_fp) > 0:
-                                    slowed_name = f"{display_name} [SLOWED {speed}x]"
-                                    ref_fps[slowed_name] = np.unpackbits(slowed_fp.view(np.uint8))
-                        except Exception as e:
-                            print(f"    ⚠️  Slowed fingerprint error: {e}")
-            
-            # Save the index to cache
-            if ref_fps:
-                print("\n💾 Saving index to cache...")
-                if index_cache.save_index(audio_dir, ref_fps, shazam_names, config_for_cache):
-                    print("✅ Index cached for next run")
-                else:
-                    print("⚠️  Failed to save cache")
-                    
-        except Exception as e:
-            print(f"❌ Error indexing: {e}")
-            import traceback
-            traceback.print_exc()
+
+                        if fp is not None and len(fp) > 0:
+                            display_name = build_reference_label(
+                                rel_path,
+                                shazam_names.get(rel_path, filename),
+                                used_ref_labels
+                            )
+                            used_ref_labels.add(display_name.lower())
+                            ref_fps[display_name] = np.unpackbits(fp.view(np.uint8))
+
+                            if detect_slowed and rel_path.lower().endswith(audio_exts):
+                                try:
+                                    slowed_fps = generate_slowed_fingerprints(file_path, slowed_speeds, fpcalc, audio_dir)
+                                    for speed, slowed_fp in slowed_fps.items():
+                                        if slowed_fp is None or len(slowed_fp) == 0:
+                                            continue
+
+                                        slowed_name = f"{display_name} [SLOWED {speed}x]"
+                                        ref_fps[slowed_name] = np.unpackbits(slowed_fp.view(np.uint8))
+                                except Exception as e:
+                                    print(f"    ⚠️  Slowed fingerprint error: {e}")
+
+                        completed_files.append(rel_path)
+                        completed_file_set.add(rel_path)
+
+                    except KeyboardInterrupt:
+                        print("\n⏸️  Indexing interrupted. Saving resume checkpoint...")
+                        index_cache.save_checkpoint(
+                            audio_dir,
+                            ref_fps,
+                            shazam_names,
+                            config_for_cache,
+                            all_files,
+                            completed_files
+                        )
+                        print("💾 Resume checkpoint saved")
+                        raise
+
+                if ref_fps:
+                    print("\n💾 Saving index to cache...")
+                    if index_cache.save_index(audio_dir, ref_fps, shazam_names, config_for_cache):
+                        print("✅ Index cached for next run")
+                    else:
+                        print("⚠️  Failed to save cache")
+
+            except Exception as e:
+                print(f"❌ Error indexing: {e}")
+                import traceback
+                traceback.print_exc()
+                sys.exit(1)
+            except KeyboardInterrupt:
+                print("\n⏹️  Index build stopped. Re-run the CLI to resume from the saved checkpoint.")
+                sys.exit(130)
+
+        if not ref_fps:
+            print("\n❌ No reference fingerprints generated.")
             sys.exit(1)
-    
-    if not ref_fps:
-        print("\n❌ No reference fingerprints generated.")
-        sys.exit(1)
-    
-    print(f"\n✅ Indexed {len(ref_fps)} reference tracks")
-    if shazam_names:
-        print(f"🎵 Shazam identified {len(shazam_names)} tracks")
+
+        print(f"\n✅ Indexed {len(ref_fps)} reference tracks")
+        if shazam_names:
+            print(f"🎵 Shazam identified {len(shazam_names)} tracks")
     
     # Match videos
     print("\n" + "=" * 60)
@@ -986,6 +1129,7 @@ Monitor Mode (auto-process new files):
         temp_wav = os.path.join(video_dir, f".temp_extract_{i}.wav")
         
         matched = False
+        shazam_error = None
         
         try:
             with VideoAudioExtractor(full_path, temp_wav) as extractor:
@@ -995,220 +1139,139 @@ Monitor Mode (auto-process new files):
                 
                 extractor.extract_audio()
                 
-                q_fp = get_fingerprint_cached(temp_wav, fpcalc)
-                if q_fp is None or len(q_fp) == 0:
-                    print("  ⚠️  Fingerprint error")
-                    continue
-                
-                q_bits = np.unpackbits(q_fp.view(np.uint8))
-                n_q = len(q_bits)
-                
                 best_ber = 1.0
-                best_ref = None
-                
-                for ref_name, r_bits in ref_fps.items():
-                    n_r = len(r_bits)
-                    if n_q > n_r: continue
-                    
-                    n_windows = (n_r // 32) - len(q_fp) + 1
-                    if n_windows < 1: continue
-                    
-                    min_dist = float('inf')
-                    for w in range(n_windows):
-                        start = w * 32
-                        end = start + n_q
-                        sub_r = r_bits[start:end]
-                        dist = np.count_nonzero(np.bitwise_xor(q_bits, sub_r))
-                        if dist < min_dist:
-                            min_dist = dist
-                            if min_dist == 0: break
-                    
-                    ber = min_dist / n_q if n_q > 0 else 1.0
-                    if ber < best_ber:
-                        best_ber = ber
-                        best_ref = ref_name
-                        if best_ber == 0: break
-                
-                if best_ref and best_ber < threshold:
-                    new_name = generate_name(
-                        ref_name=best_ref,
-                        vid_name=f,
-                        vid_dir=video_dir,
-                        used_names=proposed_names,
-                        fixed_tags=fixed_tags,
-                        pool_tags=pool_tags,
-                        preserve_exact=preserve_exact
-                    )
-                    proposed_names.add(new_name.lower())
-                    # Determine if slowed and extract speed
-                    is_slowed = '[SLOWED' in best_ref
-                    slowed_speed = None
-                    if is_slowed:
-                        speed_match = re.search(r'\[SLOWED ([\d.]+)x\]', best_ref)
-                        if speed_match:
-                            slowed_speed = float(speed_match.group(1))
-                    
-                    match_info = {
-                        'method': 'slowed' if is_slowed else 'chromaprint',
-                        'reference': best_ref,
-                        'ber': best_ber,
-                        'is_slowed': is_slowed,
-                        'slowed_speed': slowed_speed
-                    }
-                    matches.append((f, new_name, match_info))
-                    slowed_indicator = " 🐌" if is_slowed else ""
-                    if slowed_indicator:
-                        slowed_matches += 1
-                    print(f"  ✅ Match: {best_ref} (BER: {best_ber:.3f}){slowed_indicator}")
-                    print(f"     → {new_name}")
-                    matched = True
-                
-                # Try Shazam fallback if no match
+
+                if not shazam_only_mode:
+                    q_fp = get_fingerprint_cached(temp_wav, fpcalc, cache_key_source=full_path)
+                    if q_fp is None or len(q_fp) == 0:
+                        print("  ⚠️  Fingerprint error")
+                        continue
+
+                    q_bits = np.unpackbits(q_fp.view(np.uint8))
+                    n_q = len(q_bits)
+
+                    best_ref = None
+
+                    for ref_name, r_bits in ref_fps.items():
+                        n_r = len(r_bits)
+                        if n_q > n_r:
+                            continue
+
+                        n_windows = (n_r // 32) - len(q_fp) + 1
+                        if n_windows < 1:
+                            continue
+
+                        min_dist = float('inf')
+                        for w in range(n_windows):
+                            start = w * 32
+                            end = start + n_q
+                            sub_r = r_bits[start:end]
+                            dist = np.count_nonzero(np.bitwise_xor(q_bits, sub_r))
+                            if dist < min_dist:
+                                min_dist = dist
+                                if min_dist == 0:
+                                    break
+
+                        ber = min_dist / n_q if n_q > 0 else 1.0
+                        if ber < best_ber:
+                            best_ber = ber
+                            best_ref = ref_name
+                            if best_ber == 0:
+                                break
+
+                    if best_ref and best_ber < threshold:
+                        new_name = generate_name(
+                            ref_name=best_ref,
+                            vid_name=f,
+                            vid_dir=video_dir,
+                            used_names=proposed_names,
+                            fixed_tags=fixed_tags,
+                            pool_tags=pool_tags,
+                            preserve_exact=preserve_exact
+                        )
+                        proposed_names.add(new_name.lower())
+                        # Determine if slowed and extract speed
+                        is_slowed = '[SLOWED' in best_ref
+                        slowed_speed = None
+                        if is_slowed:
+                            speed_match = re.search(r'\[SLOWED ([\d.]+)x\]', best_ref)
+                            if speed_match:
+                                slowed_speed = float(speed_match.group(1))
+
+                        match_info = {
+                            'method': 'slowed' if is_slowed else 'chromaprint',
+                            'reference': best_ref,
+                            'ber': best_ber,
+                            'is_slowed': is_slowed,
+                            'slowed_speed': slowed_speed
+                        }
+                        matches.append((f, new_name, match_info))
+                        slowed_indicator = " 🐌" if is_slowed else ""
+                        if slowed_indicator:
+                            slowed_matches += 1
+                        print(f"  ✅ Match: {best_ref} (BER: {best_ber:.3f}){slowed_indicator}")
+                        print(f"     → {new_name}")
+                        matched = True
+
                 if not matched and use_shazam_fallback and shazam_fallback_client:
                     try:
-                        print(f"  🔍 Trying Shazam fallback... (max 30s)")
-                        result = asyncio.run(shazam_fallback_client.identify(temp_wav, timeout=30))
-                        
-                        if result:
-                            shazam_name = result.get_filename_base()
-                            shazam_lower = shazam_name.lower()
-                            
-                            # Parse Shazam result (format: "Artist - Title")
-                            shazam_parts = shazam_lower.split(' - ', 1)
-                            shazam_artist = shazam_parts[0].strip() if len(shazam_parts) > 0 else ""
-                            shazam_title = shazam_parts[1].strip() if len(shazam_parts) > 1 else ""
-                            
-                            # Look for match in reference library by name
-                            best_match = None
-                            best_score = 0
-                            
-                            for ref_name in ref_fps.keys():
-                                ref_base = os.path.splitext(ref_name)[0].lower()
-                                
-                                # Check for exact substring match first
-                                if shazam_lower in ref_base or ref_base in shazam_lower:
-                                    best_match = ref_name
-                                    best_score = 100
-                                    break
-                                
-                                # Parse reference name and compare word-by-word
-                                ref_parts = ref_base.split(' - ', 1)
-                                ref_artist = ref_parts[0].strip() if len(ref_parts) > 0 else ""
-                                ref_title = ref_parts[1].strip() if len(ref_parts) > 1 else ""
-                                
-                                # Calculate match score based on word overlap
-                                def word_match_score(a, b):
-                                    a_words = set(a.replace('_', ' ').replace('-', ' ').split())
-                                    b_words = set(b.replace('_', ' ').replace('-', ' ').split())
-                                    if not a_words or not b_words:
-                                        return 0
-                                    return len(a_words & b_words) / max(len(a_words), len(b_words))
-                                
-                                artist_score = word_match_score(shazam_artist, ref_artist)
-                                title_score = word_match_score(shazam_title, ref_title)
-                                
-                                # Combined score weighted toward title match
-                                score = (artist_score * 0.3 + title_score * 0.7) * 100
-                                
-                                if score > best_score and score >= 50:  # Threshold: 50% match
-                                    best_score = score
-                                    best_match = ref_name
-                            
-                            if best_match:
-                                new_name = generate_name(
-                                    ref_name=best_match,
-                                    vid_name=f,
-                                    vid_dir=video_dir,
-                                    used_names=proposed_names,
-                                    fixed_tags=fixed_tags,
-                                    pool_tags=pool_tags,
-                                    preserve_exact=preserve_exact
-                                )
-                                proposed_names.add(new_name.lower())
-                                match_info = {
-                                    'method': 'shazam',
-                                    'reference': best_match,
-                                    'ber': 0.0,
-                                    'shazam_name': shazam_name,
-                                    'similarity_score': best_score
-                                }
-                                matches.append((f, new_name, match_info))
+                        shazam_mode_label = "Using Shazam" if shazam_only_mode else "Trying Shazam fallback"
+                        print(f"  🔍 {shazam_mode_label}... (max 30s)")
+
+                        success, new_name, match_info = run_shazam_match(
+                            audio_path=temp_wav,
+                            shazam_client=shazam_fallback_client,
+                            reference_names=() if shazam_only_mode else ref_fps.keys(),
+                            video_name=f,
+                            video_dir=video_dir,
+                            proposed_names=proposed_names,
+                            fixed_tags=fixed_tags,
+                            pool_tags=pool_tags,
+                            preserve_exact=preserve_exact,
+                            shazam_fallback_any=shazam_fallback_any
+                        )
+
+                        if success:
+                            proposed_names.add(new_name.lower())
+                            matches.append((f, new_name, match_info))
+                            shazam_name = match_info.get('shazam_name')
+                            best_score = match_info.get('similarity_score', 0.0)
+                            if match_info.get('method') == 'shazam':
                                 if best_score == 100:
-                                    print(f"  🎵 Shazam match: {best_match}")
+                                    print(f"  🎵 Shazam match: {match_info['reference']}")
                                 else:
-                                    print(f"  🎵 Shazam match: {best_match} ({best_score:.0f}% similarity)")
-                                print(f"     → {new_name}")
-                                shazam_fallback_matches += 1
-                                matched = True
-                                
-                                # Save to reference library if enabled and this was a close match
-                                if save_new_audio and temp_wav and os.path.exists(temp_wav):
-                                    try:
-                                        from shortssync import sanitize_filename
-                                        safe_name = sanitize_filename(shazam_name)
-                                        target_path = os.path.join(audio_dir, f"{safe_name}.mp3")
-                                        # Handle duplicates
-                                        counter = 1
-                                        base_target = target_path
-                                        while os.path.exists(target_path):
-                                            target_path = base_target.replace('.mp3', f' ({counter}).mp3')
-                                            counter += 1
-                                        # Convert to mp3 using ffmpeg
-                                        cmd = ['ffmpeg', '-y', '-i', temp_wav, '-q:a', '2', '-map', 'a', target_path]
-                                        subprocess.run(cmd, capture_output=True, check=True)
-                                        print(f"     💾 Saved to library: {os.path.basename(target_path)}")
-                                    except Exception as e:
-                                        print(f"     ⚠️  Could not save to library: {e}")
-                                        
-                            elif shazam_fallback_any:
-                                # Use Shazam name directly even if not in reference library
-                                new_name = generate_name(
-                                    ref_name=shazam_name,
-                                    vid_name=f,
-                                    vid_dir=video_dir,
-                                    used_names=proposed_names,
-                                    fixed_tags=fixed_tags,
-                                    pool_tags=pool_tags,
-                                    preserve_exact=preserve_exact
-                                )
-                                proposed_names.add(new_name.lower())
-                                match_info = {
-                                    'method': 'shazam_new',
-                                    'reference': shazam_name,
-                                    'ber': 0.0,
-                                    'shazam_name': shazam_name
-                                }
-                                matches.append((f, new_name, match_info))
-                                print(f"  🎵 Shazam ID (not in library): {shazam_name}")
-                                print(f"     → {new_name}")
-                                shazam_fallback_matches += 1
-                                matched = True
-                                
-                                # Save to reference library if enabled
-                                if save_new_audio and temp_wav and os.path.exists(temp_wav):
-                                    try:
-                                        from shortssync import sanitize_filename
-                                        safe_name = sanitize_filename(shazam_name)
-                                        target_path = os.path.join(audio_dir, f"{safe_name}.mp3")
-                                        # Handle duplicates
-                                        counter = 1
-                                        base_target = target_path
-                                        while os.path.exists(target_path):
-                                            target_path = base_target.replace('.mp3', f' ({counter}).mp3')
-                                            counter += 1
-                                        # Convert to mp3 using ffmpeg
-                                        cmd = ['ffmpeg', '-y', '-i', temp_wav, '-q:a', '2', '-map', 'a', target_path]
-                                        subprocess.run(cmd, capture_output=True, check=True)
-                                        print(f"     💾 Saved to library: {os.path.basename(target_path)}")
-                                    except Exception as e:
-                                        print(f"     ⚠️  Could not save to library: {e}")
+                                    print(f"  🎵 Shazam match: {match_info['reference']} ({best_score:.0f}% similarity)")
                             else:
-                                print(f"  🎵 Shazam found '{shazam_name}' but not in reference library")
+                                print(f"  🎵 Shazam ID (not in library): {shazam_name}")
+                            print(f"     → {new_name}")
+                            shazam_fallback_matches += 1
+                            matched = True
+
+                            if save_new_audio and temp_wav and os.path.exists(temp_wav) and shazam_name:
+                                try:
+                                    from shortssync import sanitize_filename
+                                    safe_name = sanitize_filename(shazam_name)
+                                    target_path = os.path.join(audio_dir, f"{safe_name}.mp3")
+                                    counter = 1
+                                    base_target = target_path
+                                    while os.path.exists(target_path):
+                                        target_path = base_target.replace('.mp3', f' ({counter}).mp3')
+                                        counter += 1
+                                    cmd = ['ffmpeg', '-y', '-i', temp_wav, '-q:a', '2', '-map', 'a', target_path]
+                                    subprocess.run(cmd, capture_output=True, check=True)
+                                    print(f"     💾 Saved to library: {os.path.basename(target_path)}")
+                                except Exception as e:
+                                    print(f"     ⚠️  Could not save to library: {e}")
+                        else:
+                            shazam_error = match_info.get('error')
                     except Exception as e:
-                        print(f"  ⚠️  Shazam error: {e}")
+                        shazam_error = f"Shazam error: {e}"
                 
                 if not matched:
-                    print(f"  ❌ No match (best BER: {best_ber:.3f})")
+                    if shazam_error:
+                        print(f"  ❌ {shazam_error}")
+                    else:
+                        print(f"  ❌ No match (best BER: {best_ber:.3f})")
         
         except Exception as e:
             print(f"  ❌ Error: {e}")
