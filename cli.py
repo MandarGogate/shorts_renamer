@@ -800,6 +800,10 @@ Monitor Mode (auto-process new files):
             else:
                 print("Status: ❌ No cache found")
                 print(f"Cache location: {stats['index_file']}")
+            if stats.get('checkpoint_exists'):
+                checkpoint_completed = stats.get('checkpoint_completed', 0)
+                checkpoint_total = stats.get('checkpoint_total_files', 0)
+                print(f"Resume checkpoint: ✅ {checkpoint_completed}/{checkpoint_total} source files")
             sys.exit(0)
     
     # Handle rename audio command
@@ -954,6 +958,7 @@ Monitor Mode (auto-process new files):
                     if cached:
                         ref_fps, shazam_names = cached
                         print(f"✅ Loaded {len(ref_fps)} fingerprints from cache")
+                        index_cache.clear_checkpoint()
                         use_cached_index = True
             except Exception as e:
                 print(f"⚠️  Cache check failed: {e}")
@@ -1054,6 +1059,14 @@ Monitor Mode (auto-process new files):
 
                         completed_files.append(rel_path)
                         completed_file_set.add(rel_path)
+                        index_cache.save_checkpoint(
+                            audio_dir,
+                            ref_fps,
+                            shazam_names,
+                            config_for_cache,
+                            all_files,
+                            completed_files
+                        )
 
                     except KeyboardInterrupt:
                         print("\n⏸️  Indexing interrupted. Saving resume checkpoint...")

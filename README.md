@@ -526,6 +526,7 @@ Output: Taylor Swift - Cruel Summer #shorts #fyp #viral.mp4
 Two cache systems:
 - **Fingerprint Cache** (`.fingerprints/`): Speeds up re-indexing
 - **Shazam Cache** (`.shazam_cache/`): Avoids repeated API calls
+- **Reference Index Checkpoint** (`.fingerprints/reference_index_checkpoint*`): Lets the CLI resume an interrupted or suspended reference-index build instead of starting again from file 1
 
 Both use content-based hashing for automatic invalidation.
 
@@ -585,6 +586,8 @@ python cli.py -a "/path/to/audio/slowed_versions/0.7x"
 - Keep reference library organized
 - Use SSD for better I/O performance
 - Enable caching (on by default)
+
+If `python cli.py` stops while building the reference index, run it again to resume from the last completed source file. Use `python cli.py --index-stats` to inspect any saved resume checkpoint.
 
 ---
 
