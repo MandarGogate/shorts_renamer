@@ -11,24 +11,14 @@ if ! command -v python3 &> /dev/null; then
     exit 1
 fi
 
-# Check if virtual environment exists
-if [ ! -d "venv" ]; then
-    echo "Creating virtual environment..."
-    python3 -m venv venv
-fi
-
-# Activate virtual environment
-echo "Activating virtual environment..."
-source venv/bin/activate
-
 # Install/update dependencies
 echo "Installing dependencies..."
-pip install -q -r requirements_web.txt
+pip3 install -q -r requirements.txt
 
 # Check for fpcalc
 if ! command -v fpcalc &> /dev/null; then
     echo ""
-    echo "⚠️  Warning: fpcalc not found"
+    echo "Warning: fpcalc not found"
     echo "Install with:"
     echo "  macOS: brew install chromaprint"
     echo "  Linux: sudo apt install libchromaprint-tools"
@@ -41,4 +31,4 @@ echo "Starting ShortsSync Web Server..."
 echo "The server will automatically find an available port (starting from 5001)"
 echo "Check the output below for the actual URL to open in your browser"
 echo ""
-python3 web_backend.py --port 8668
+python3 web_backend.py
