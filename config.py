@@ -7,8 +7,8 @@ If you want to change defaults, edit `DEFAULT_SETTINGS` directly.
 
 DEFAULT_SETTINGS = {
     # 'video_dir': '/Users/mandargogate/Work/CC/04Edited/',
-    # 'video_dir': '/Users/mandargogate/Work/CC/03Outputs/',
-    'video_dir': '/Users/mandargogate/Work/CC/05UploadQueue/',
+    'video_dir': '/Users/mandargogate/Work/CC/03Outputs/',
+    # 'video_dir': '/Users/mandargogate/Work/CC/05UploadQueue/',
     # 'video_dir': '/Users/mandargogate/Work/CC/05UploadQueue/',
     'audio_dir': '/Users/mandargogate/Work/CC/09trending',
     'fixed_tags': '#dance #viral #shorts',
@@ -40,13 +40,14 @@ DEFAULT_SETTINGS = {
     'require_alignment_for_match': False,
     # Shazam settings
     'use_shazam': False,  # Enable Shazam to identify reference audio files during indexing
-    'shazam_only_mode': False,  # Use Shazam for renaming without running Chromaprint first
+    'shazam_only_mode': True,  # Use Shazam for renaming without running Chromaprint first
     'use_shazam_fallback': True,  # Use Shazam as fallback for unmatched videos
     'save_new_audio': True,  # Save Shazam-identified audio to reference library
     'shazam_fallback_any': True,  # Use Shazam name directly when song not in reference library
     # Slowed audio detection
     'detect_slowed': True,  # Detect slowed videos and add [SLOWED] label
-    'slowed_speeds': [0.75, 0.5],  # Speed factors to check for slowed detection
+    # 'slowed_speeds': [0.75, 0.5],  # Speed factors to check for slowed detection
+    'slowed_speeds': [],  # Speed factors to check for slowed detection
 }
 
 def get_defaults():
