@@ -1,12 +1,9 @@
 import os
 import sys
 import threading
-import random
+from importlib.util import find_spec
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-import shutil
-import subprocess
-from pathlib import Path
 
 # Third-party dependencies
 try:
@@ -15,14 +12,9 @@ except ImportError:
     messagebox.showerror("Missing Dependency", "Numpy is required.\npip install numpy")
     sys.exit(1)
 
-try:
-    from moviepy.editor import VideoFileClip
-except ImportError:
-    try:
-        from moviepy import VideoFileClip
-    except ImportError:
-        messagebox.showerror("Missing Dependency", "MoviePy is required.\npip install moviepy")
-        sys.exit(1)
+if find_spec("moviepy") is None:
+    messagebox.showerror("Missing Dependency", "MoviePy is required.\npip install moviepy")
+    sys.exit(1)
 
 try:
     import yt_dlp
@@ -230,10 +222,10 @@ class ShortsSyncApp:
         builder(inner)
 
     def _build_workspace(self, parent):
-        self._create_path_input(parent, "Video Folder", self.video_dir, 0)
-        self._create_path_input(parent, "Audio Folder", self.audio_dir, 1)
+        self._create_path_input(parent, "Video Folder", self.video_dir)
+        self._create_path_input(parent, "Audio Folder", self.audio_dir)
 
-    def _create_path_input(self, parent, label, var, row):
+    def _create_path_input(self, parent, label, var):
         container = tk.Frame(parent, bg=THEME["card_bg"])
         container.pack(fill="x", pady=5)
         
@@ -298,7 +290,8 @@ class ShortsSyncApp:
 
     def _browse(self, var):
         d = filedialog.askdirectory()
-        if d: var.set(d)
+        if d:
+            var.set(d)
 
     def open_mp3_download(self):
         """Open MP3 download window."""
@@ -559,7 +552,7 @@ class ShortsSyncApp:
                     if temp_audio and os.path.exists(temp_audio):
                         try:
                             os.remove(temp_audio)
-                        except:
+                        except OSError:
                             pass
                         
         except Exception as e:
@@ -604,10 +597,12 @@ class ShortsSyncApp:
                     
                     for ref_name, r_bits in ref_fps.items():
                         n_r = len(r_bits)
-                        if n_q > n_r: continue
+                        if n_q > n_r:
+                            continue
                         
                         n_windows = (n_r // 32) - (len(q_fp)) + 1
-                        if n_windows < 1: continue
+                        if n_windows < 1:
+                            continue
                         
                         min_dist = float('inf')
                         for w in range(n_windows):
@@ -617,13 +612,15 @@ class ShortsSyncApp:
                             dist = np.count_nonzero(np.bitwise_xor(q_bits, sub_r))
                             if dist < min_dist:
                                 min_dist = dist
-                                if min_dist == 0: break
+                                if min_dist == 0:
+                                    break
                         
                         ber = min_dist / n_q if n_q > 0 else 1.0
                         if ber < best_ber:
                             best_ber = ber
                             best_ref = ref_name
-                            if best_ber == 0: break
+                            if best_ber == 0:
+                                break
                     
                     if best_ref and best_ber < 0.15:
                         new_name = generate_name(
@@ -655,7 +652,8 @@ class ShortsSyncApp:
         count = 0
         for orig, new, score in results:
             self.tree.insert("", "end", values=(orig, "→", new, score))
-            if new != "---": count += 1
+            if new != "---":
+                count += 1
             
         self.status_var.set(f"Complete. Found {count} matches.")
         self.scan_btn.config(state="normal")
@@ -666,7 +664,8 @@ class ShortsSyncApp:
 
     def commit_renames(self):
         valid = [m for m in self.matches if m[1] != "---"]
-        if not valid: return
+        if not valid:
+            return
         
         if not messagebox.askyesno("Confirm", f"Rename {len(valid)} files?"):
             return

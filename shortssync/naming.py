@@ -4,7 +4,6 @@ Filename generation and sanitization utilities.
 
 import os
 import random
-import re
 from pathlib import Path
 from typing import Set, Optional
 
@@ -155,51 +154,6 @@ def generate_name(
     
     # Fallback: use base with random number
     return f"{base}_{random.randint(1000, 9999)}{ext}"
-
-
-def generate_name_from_shazam(
-    shazam_result: dict,
-    vid_name: str,
-    vid_dir: str,
-    used_names: Set[str],
-    fixed_tags: str = "",
-    pool_tags: str = "",
-    max_length: int = 100
-) -> str:
-    """
-    Generate filename from Shazam identification result.
-    
-    Args:
-        shazam_result: Dict with 'title', 'artist', 'album', etc.
-        vid_name: Original video filename
-        vid_dir: Directory where video will be saved
-        used_names: Set of already-used lowercase filenames
-        fixed_tags: Fixed tags to append
-        pool_tags: Space-separated pool of random tags
-        max_length: Maximum filename length
-    
-    Returns:
-        Unique filename with proper extension
-    """
-    artist = shazam_result.get('artist', 'Unknown Artist')
-    title = shazam_result.get('title', 'Unknown Title')
-    
-    # Create base name: "Artist - Title"
-    base = f"{artist} - {title}"
-    
-    # Use the standard generate_name with preserve_exact=False to add tags
-    return generate_name(
-        ref_name=base,
-        vid_name=vid_name,
-        vid_dir=vid_dir,
-        used_names=used_names,
-        fixed_tags=fixed_tags,
-        pool_tags=pool_tags,
-        preserve_exact=False,
-        max_length=max_length
-    )
-
-
 def build_reference_label(
     source_path: str,
     preferred_name: Optional[str],

@@ -5,15 +5,12 @@ ShortsSync CLI - Command-line version that runs with default settings from confi
 
 import os
 import sys
-import shutil
 import subprocess
 import numpy as np
-import random
 import argparse
 import asyncio
 import re
 import tempfile
-from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -244,7 +241,6 @@ def process_single_video(
     Returns:
         Tuple of (success: bool, new_name: str or None, match_info: dict)
     """
-    import tempfile
     
     filename = os.path.basename(video_path)
     fpcalc = get_fpcalc_path()
@@ -258,8 +254,6 @@ def process_single_video(
     use_shazam_fallback = config.get('use_shazam_fallback', False)
     shazam_fallback_any = config.get('shazam_fallback_any', False)
     shazam_fallback_client = config.get('shazam_fallback_client', None)
-    save_new_audio = config.get('save_new_audio', False)
-    audio_dir = config.get('audio_dir', '')
     proposed_names = config.get('proposed_names', set())
     
     # Create temp file for audio extraction
@@ -582,7 +576,7 @@ def monitor_mode(args, defaults):
             pass
         return files
     
-    print(f"\n👀 Monitoring for new video files...\n")
+    print("\n👀 Monitoring for new video files...\n")
     
     # Initial scan - track inodes of existing files
     initial_files = get_video_files_with_inodes(video_dir)
@@ -792,7 +786,7 @@ Monitor Mode (auto-process new files):
             print("Reference Index Cache Statistics")
             print("=" * 60)
             if stats['exists']:
-                print(f"Status: ✅ Cached")
+                print("Status: ✅ Cached")
                 print(f"Entries: {stats.get('entry_count', 'N/A')}")
                 print(f"Audio dir: {stats.get('audio_dir', 'N/A')}")
                 if stats.get('config'):
@@ -903,7 +897,7 @@ Monitor Mode (auto-process new files):
     print(f"🎲 Random Tags: {pool_tags}")
     print(f"📦 Move to _Ready: {move_files}")
     print(f"📝 Exact Names: {preserve_exact}")
-    print(f"💾 Cache Directory: .fingerprints/")
+    print("💾 Cache Directory: .fingerprints/")
     print(f"🎵 Shazam (reference ID): {'Enabled' if use_shazam else 'Disabled'}")
     print(f"🎵 Shazam (fallback): {'Enabled' if use_shazam_fallback else 'Disabled'}")
     print(f"💾 Save new audio: {'Enabled' if save_new_audio else 'Disabled'}")

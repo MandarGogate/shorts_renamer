@@ -8,7 +8,6 @@ import os
 import sys
 import subprocess
 import argparse
-from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -183,7 +182,7 @@ Examples:
     print("Complete!")
     print("=" * 70)
     print(f"\nCreated {total_created} slowed versions")
-    print(f"\nFolder structure:")
+    print("\nFolder structure:")
     for speed in args.speeds:
         speed_folder = os.path.join(args.output_dir, f"{speed}x")
         count = len([f for f in os.listdir(speed_folder) if f.endswith('.mp3')]) if os.path.exists(speed_folder) else 0

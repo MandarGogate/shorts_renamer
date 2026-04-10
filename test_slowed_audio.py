@@ -8,8 +8,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from shortssync import ShazamClient, is_shazam_available, get_fingerprint_cached, get_fpcalc_path
-import numpy as np
+from shortssync import ShazamClient, is_shazam_available
 
 def test_shazam_with_slowed():
     """Test Shazam with various speed reductions."""
@@ -37,7 +36,7 @@ def test_shazam_with_slowed():
     result = asyncio.run(client.identify(test_file))
     
     if result:
-        print(f"\n✅ Original speed identified:")
+        print("\n✅ Original speed identified:")
         print(f"   {result.artist} - {result.title}")
     
     print("\n" + "=" * 70)

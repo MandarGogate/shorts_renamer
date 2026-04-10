@@ -126,19 +126,6 @@ class FingerprintCache:
         self._metadata = {}
         self._save_metadata()
     
-    def cleanup_old(self, max_age_days: int = 30):
-        """Remove cache entries older than specified days."""
-        cutoff = time.time() - (max_age_days * 86400)
-        to_remove = []
-        
-        for cache_key, info in self._metadata.items():
-            if info.get('cached_at', 0) < cutoff:
-                to_remove.append(cache_key)
-        
-        for cache_key in to_remove:
-            self._remove_cache_entry(cache_key)
-
-
 # Global cache instance
 _global_cache: Optional[FingerprintCache] = None
 
@@ -277,60 +264,6 @@ def compare_fingerprints(
     ber = diff / min_len if min_len > 0 else 1.0
     
     return ber < threshold, ber
-
-
-def find_best_match(
-    query_fp: np.ndarray,
-    reference_fps: Dict[str, np.ndarray],
-    threshold: float = 0.15
-) -> Tuple[Optional[str], float]:
-    """
-    Find best matching reference fingerprint using sliding window.
-    
-    Args:
-        query_fp: Query fingerprint
-        reference_fps: Dictionary of reference fingerprints
-        threshold: BER threshold for match
-    
-    Returns:
-        Tuple of (best_match_name, best_ber)
-    """
-    q_bits = np.unpackbits(query_fp.view(np.uint8))
-    n_q = len(q_bits)
-    
-    best_ber = 1.0
-    best_ref = None
-    
-    for ref_name, r_fp in reference_fps.items():
-        r_bits = np.unpackbits(r_fp.view(np.uint8))
-        n_r = len(r_bits)
-        
-        if n_q > n_r:
-            continue
-        
-        n_windows = (n_r // 32) - len(query_fp) + 1
-        if n_windows < 1:
-            continue
-        
-        min_dist = float('inf')
-        for w in range(n_windows):
-            start = w * 32
-            end = start + n_q
-            sub_r = r_bits[start:end]
-            dist = np.count_nonzero(np.bitwise_xor(q_bits, sub_r))
-            if dist < min_dist:
-                min_dist = dist
-                if min_dist == 0:
-                    break
-        
-        ber = min_dist / n_q if n_q > 0 else 1.0
-        if ber < best_ber:
-            best_ber = ber
-            best_ref = ref_name
-            if best_ber == 0:
-                break
-    
-    return best_ref, best_ber
 
 
 def create_slowed_audio(input_path: str, output_path: str, speed: float = 0.8) -> bool:

@@ -12,7 +12,6 @@ Usage:
 import os
 import sys
 import argparse
-from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -110,7 +109,7 @@ def rename_audio_files(audio_dir, dry_run=False, recursive=False):
             
             # Check if already correctly named
             if original_name == new_filename:
-                print(f"  ✓ Already correctly named")
+                print("  ✓ Already correctly named")
                 skipped += 1
                 continue
             

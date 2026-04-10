@@ -4,7 +4,6 @@ Utility functions and context managers for safe video/audio handling.
 
 import os
 import shutil
-from pathlib import Path
 from typing import Optional, Generator
 from contextlib import contextmanager
 
@@ -49,7 +48,6 @@ class VideoAudioExtractor:
         self.video_path = video_path
         self.temp_audio_path = temp_audio_path
         self.video_clip = None
-        self._audio_extracted = False
         self._extraction_path = None
     
     def __enter__(self):
@@ -59,7 +57,7 @@ class VideoAudioExtractor:
         self.video_clip = VideoFileClip(self.video_path)
         return self
     
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, _exc_type, _exc_val, _exc_tb):
         """Ensure video clip is closed and temp files are cleaned up."""
         # Close video clip
         if self.video_clip is not None:
@@ -119,15 +117,7 @@ class VideoAudioExtractor:
         )
         
         self._extraction_path = output_path
-        self._audio_extracted = True
-        
         return output_path
-    
-    def get_audio_array(self):
-        """Get audio as numpy array."""
-        if not self.has_audio:
-            raise ValueError("Video has no audio track")
-        return self.video_clip.audio.to_soundarray()
 
 
 @contextmanager
@@ -195,90 +185,4 @@ def extract_audio_safe(
             try:
                 os.remove(actual_output_path)
             except OSError:
-                pass
-
-
-@contextmanager
-def temp_audio_file(suffix: str = ".wav") -> Generator[str, None, None]:
-    """
-    Context manager for temporary audio file.
-    
-    Yields:
-        Path to temp file
-    """
-    import tempfile
-    
-    fd, temp_path = tempfile.mkstemp(suffix=suffix)
-    os.close(fd)
-    
-    try:
-        yield temp_path
-    finally:
-        try:
-            os.remove(temp_path)
-        except OSError:
-            pass
-
-
-def get_video_duration(video_path: str) -> Optional[float]:
-    """Get video duration without loading full video."""
-    if not MOVIEPY_AVAILABLE:
-        return None
-    
-    clip = None
-    try:
-        clip = VideoFileClip(video_path)
-        duration = clip.duration
-        return duration
-    except Exception:
-        return None
-    finally:
-        if clip is not None:
-            try:
-                clip.close()
-            except Exception:
-                pass
-
-
-def is_valid_video(video_path: str) -> bool:
-    """Check if file is a valid video."""
-    if not MOVIEPY_AVAILABLE:
-        return False
-    
-    clip = None
-    try:
-        clip = VideoFileClip(video_path)
-        return True
-    except Exception:
-        return False
-    finally:
-        if clip is not None:
-            try:
-                clip.close()
-            except Exception:
-                pass
-
-
-def get_video_info(video_path: str) -> dict:
-    """Get basic video information."""
-    if not MOVIEPY_AVAILABLE:
-        return {'error': 'moviepy not installed'}
-    
-    clip = None
-    try:
-        clip = VideoFileClip(video_path)
-        return {
-            'duration': clip.duration,
-            'fps': clip.fps,
-            'size': clip.size,
-            'has_audio': clip.audio is not None,
-            'audio_fps': clip.audio.fps if clip.audio else None,
-        }
-    except Exception as e:
-        return {'error': str(e)}
-    finally:
-        if clip is not None:
-            try:
-                clip.close()
-            except Exception:
                 pass

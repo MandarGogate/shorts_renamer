@@ -85,7 +85,7 @@ def download_mp3(url, output_dir, filename=None):
             
             ydl.download([url])
             
-            print(f"✅ Successfully downloaded!\n")
+            print("✅ Successfully downloaded!\n")
             return True
             
     except Exception as e:

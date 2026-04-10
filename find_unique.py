@@ -7,7 +7,7 @@ import os
 import sys
 import shutil
 import argparse
-from collections import defaultdict
+from importlib.util import find_spec
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -21,9 +21,7 @@ from shortssync import (
     is_shazam_available
 )
 
-try:
-    import numpy as np
-except ImportError:
+if find_spec("numpy") is None:
     print("Error: numpy is required.\npip install numpy")
     sys.exit(1)
 
@@ -78,7 +76,7 @@ Examples:
     print("=" * 70)
     print(f"\n📁 Directory: {args.directory}")
     print(f"🎯 BER Threshold: {args.threshold}")
-    print(f"🔄 Recursive: Yes (includes subdirectories)")
+    print("🔄 Recursive: Yes (includes subdirectories)")
     print(f"🎵 Shazam Integration: {'Enabled' if use_shazam else 'Disabled'}")
     
     # Initialize Shazam client if needed
@@ -335,7 +333,7 @@ Examples:
                         if video is not None:
                             try:
                                 video.close()
-                            except:
+                            except Exception:
                                 pass
                 else:
                     # Regular copy

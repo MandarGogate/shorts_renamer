@@ -6,27 +6,20 @@ Provides RESTful API and WebSocket support for browser-based access
 
 import os
 import sys
-import json
-import shutil
-import subprocess
 import threading
-import time
 import socket
 from datetime import datetime
-from pathlib import Path
 import secrets
 
 import numpy as np
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
-from werkzeug.utils import secure_filename
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from shortssync import (
-    get_fingerprint,
     get_fingerprint_cached,
     generate_name,
     build_reference_label,
@@ -36,11 +29,6 @@ from shortssync import (
     is_shazam_available,
     ShazamCache
 )
-
-try:
-    from moviepy import VideoFileClip
-except ImportError:
-    from moviepy.editor import VideoFileClip
 
 try:
     import yt_dlp
@@ -109,18 +97,6 @@ def emit_status(message, progress=None, total=None):
     socketio.emit('status_update', processing_status)
     print(f"[Status] {message}")
 
-def extract_audio_from_video(video_path, output_path):
-    """Extract audio track from video file using safe extractor."""
-    try:
-        with VideoAudioExtractor(video_path, output_path) as extractor:
-            if not extractor.has_audio:
-                return False
-            extractor.extract_audio()
-            return True
-    except Exception as e:
-        print(f"Error extracting audio: {e}")
-        return False
-
 # ==================== API Routes ====================
 
 @app.route('/')
@@ -159,7 +135,7 @@ def get_config():
 @app.route('/api/config', methods=['POST'])
 def update_config():
     """Update configuration (runtime only, not saved to file)."""
-    data = request.json
+    _ = request.json
     # In a production app, you'd validate and save this
     return jsonify({'success': True, 'message': 'Configuration updated'})
 
@@ -707,7 +683,7 @@ def download_video():
 
             try:
                 os.makedirs(output_dir, exist_ok=True)
-                emit_status(f"Starting download from URL...")
+                emit_status("Starting download from URL...")
 
                 # Configure yt-dlp options
                 ydl_opts = {
@@ -755,7 +731,7 @@ def download_video():
                 if total > 0:
                     progress = int((downloaded / total) * 100)
                     emit_status(f"Downloading: {progress}%", progress, 100)
-            except:
+            except (TypeError, ValueError, ZeroDivisionError):
                 pass
         elif d['status'] == 'finished':
             emit_status("Download finished, processing...")
@@ -865,7 +841,7 @@ def download_mp3():
                 socketio.emit('status_update', processing_status)
 
                 # Summary
-                emit_status(f"✅ MP3 Download Complete!")
+                emit_status("✅ MP3 Download Complete!")
                 emit_status(f"   Successful: {successful}, Failed: {failed}")
                 emit_status(f"   Output: {audio_dir}")
 
@@ -889,12 +865,12 @@ def download_mp3():
 def handle_connect():
     """Handle client connection."""
     emit('status_update', processing_status)
-    print(f"Client connected")
+    print("Client connected")
 
 @socketio.on('disconnect')
 def handle_disconnect():
     """Handle client disconnection."""
-    print(f"Client disconnected")
+    print("Client disconnected")
 
 # ==================== Utility Functions ====================
 
