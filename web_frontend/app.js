@@ -21,6 +21,7 @@ document.addEventListener('DOMContentLoaded', () => {
     attachEventListeners();
     initializeTabs();
     checkHealth();
+    fetchMatches();
 });
 
 // ==================== WebSocket Connection ====================
@@ -105,7 +106,7 @@ function attachEventListeners() {
     document.getElementById('btnIndex').addEventListener('click', startIndexing);
     document.getElementById('btnMatch').addEventListener('click', startMatching);
     document.getElementById('btnRename').addEventListener('click', startRenaming);
-    document.getElementById('btnClear').addEventListener('click', clearResults);
+    document.getElementById('btnClear').addEventListener('click', () => clearResults());
     document.getElementById('btnClearLog').addEventListener('click', clearLog);
     document.getElementById('btnClearLog2')?.addEventListener('click', clearLog);
     document.getElementById('btnClearLog3')?.addEventListener('click', clearLog);
@@ -113,32 +114,20 @@ function attachEventListeners() {
 
 // ==================== Configuration Management ====================
 function loadConfig() {
-    // Load from localStorage if available
     const saved = localStorage.getItem('shortsync_config');
     if (saved) {
-        config = JSON.parse(saved);
-        document.getElementById('videoDir').value = config.video_dir || '';
-        document.getElementById('audioDir').value = config.audio_dir || '';
-        document.getElementById('fixedTags').value = config.fixed_tags || '#shorts';
-        document.getElementById('poolTags').value = config.pool_tags || '#fyp #viral #trending';
-        document.getElementById('moveFiles').checked = config.move_files || false;
-        document.getElementById('preserveExact').checked = config.preserve_exact_names || false;
+        try {
+            applyConfigToInputs(JSON.parse(saved));
+        } catch {
+            localStorage.removeItem('shortsync_config');
+        }
     }
 
-    // Fetch from server
     fetch('/api/config')
         .then(res => res.json())
         .then(data => {
             if (data.config) {
-                // Populate with server defaults if not in localStorage
-                if (!saved) {
-                    document.getElementById('videoDir').value = data.config.video_dir || '';
-                    document.getElementById('audioDir').value = data.config.audio_dir || '';
-                    document.getElementById('fixedTags').value = data.config.fixed_tags || '#shorts';
-                    document.getElementById('poolTags').value = data.config.pool_tags || '';
-                }
-                // Always update MP3 audio dir field
-                document.getElementById('mp3AudioDir').value = data.config.audio_dir || 'Not configured';
+                applyConfigToInputs(data.config);
             }
         })
         .catch(err => {
@@ -146,17 +135,47 @@ function loadConfig() {
         });
 }
 
-function saveConfig() {
-    config.video_dir = document.getElementById('videoDir').value.trim();
-    config.audio_dir = document.getElementById('audioDir').value.trim();
-    config.fixed_tags = document.getElementById('fixedTags').value.trim();
-    config.pool_tags = document.getElementById('poolTags').value.trim();
-    config.move_files = document.getElementById('moveFiles').checked;
-    config.preserve_exact_names = document.getElementById('preserveExact').checked;
-
-    // Save to localStorage
+function applyConfigToInputs(nextConfig) {
+    config = { ...config, ...nextConfig };
+    document.getElementById('videoDir').value = config.video_dir || '';
+    document.getElementById('audioDir').value = config.audio_dir || '';
+    document.getElementById('fixedTags').value = config.fixed_tags || '#shorts';
+    document.getElementById('poolTags').value = config.pool_tags || '#fyp #viral #trending';
+    document.getElementById('moveFiles').checked = Boolean(config.move_files);
+    document.getElementById('preserveExact').checked = Boolean(config.preserve_exact_names);
+    document.getElementById('mp3AudioDir').value = config.audio_dir || 'Not configured';
     localStorage.setItem('shortsync_config', JSON.stringify(config));
-    addLog('Configuration saved', 'info');
+}
+
+function saveConfig() {
+    const nextConfig = {
+        video_dir: document.getElementById('videoDir').value.trim(),
+        audio_dir: document.getElementById('audioDir').value.trim(),
+        fixed_tags: document.getElementById('fixedTags').value.trim(),
+        pool_tags: document.getElementById('poolTags').value.trim(),
+        move_files: document.getElementById('moveFiles').checked,
+        preserve_exact_names: document.getElementById('preserveExact').checked,
+    };
+
+    applyConfigToInputs(nextConfig);
+
+    fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(nextConfig)
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.config) {
+            applyConfigToInputs(data.config);
+            addLog('Configuration saved', 'info');
+        } else if (data.error) {
+            addLog('Configuration save failed: ' + data.error, 'error');
+        }
+    })
+    .catch(err => {
+        addLog('Error saving config: ' + err.message, 'error');
+    });
 }
 
 // ==================== Health Check ====================
@@ -432,12 +451,14 @@ function resetMatchButton() {
 
 // ==================== Renaming ====================
 function startRenaming() {
-    if (matches.length === 0) {
-        alert('No matches to rename');
+    const approvedMatches = matches.filter(match => match.decision === 'approved');
+
+    if (approvedMatches.length === 0) {
+        alert('Approve at least one match before renaming');
         return;
     }
 
-    if (!confirm(`Rename ${matches.length} files?`)) {
+    if (!confirm(`Rename ${approvedMatches.length} approved files?`)) {
         return;
     }
 
@@ -472,7 +493,7 @@ function startRenaming() {
 
 function resetRenameButton() {
     const btnRename = document.getElementById('btnRename');
-    btnRename.disabled = false;
+    btnRename.disabled = !matches.some(match => match.decision === 'approved');
     btnRename.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Commit Rename';
 }
 
@@ -543,9 +564,9 @@ function handleStatusUpdate(data) {
             fetchMatches();
         } else if (lastTask === 'renaming') {
             resetRenameButton();
-            clearResults();
+            fetchMatches();
         }
-        lastTask = null;  // Clear after handling
+        lastTask = null;
     }
     
     // Update MP3 progress bar during download
@@ -590,8 +611,7 @@ function fetchMatches() {
         .then(data => {
             matches = data.matches || [];
             document.getElementById('matchCount').textContent = matches.length;
-            displayResults(matches);
-            addLog(`Found ${matches.length} matches`, 'success');
+            displayResults(matches, data.summary || { pending: 0, approved: 0, skipped: 0, total: 0 });
         })
         .catch(err => {
             addLog('Error fetching matches: ' + err.message, 'error');
@@ -599,32 +619,61 @@ function fetchMatches() {
 }
 
 // ==================== Display Results ====================
-function displayResults(matchList) {
+function displayResults(matchList, summary) {
     const resultsCard = document.getElementById('resultsCard');
     const resultsContainer = document.getElementById('resultsContainer');
+    const btnRename = document.getElementById('btnRename');
+    const counts = normalizeSummary(summary);
 
     if (matchList.length === 0) {
         resultsCard.style.display = 'none';
+        btnRename.disabled = true;
         return;
     }
 
     resultsCard.style.display = 'block';
     resultsContainer.innerHTML = '';
+    btnRename.disabled = counts.approved === 0;
+
+    const summaryCard = document.createElement('div');
+    summaryCard.className = 'review-summary';
+    summaryCard.innerHTML = `
+        <div class="review-summary-stats">
+            <span class="review-pill pending">Pending: ${counts.pending}</span>
+            <span class="review-pill approved">Approved: ${counts.approved}</span>
+            <span class="review-pill skipped">Skipped: ${counts.skipped}</span>
+        </div>
+        <div class="review-summary-actions">
+            <button class="btn btn-secondary btn-small" id="btnApproveAllMatches">Approve All</button>
+            <button class="btn btn-secondary btn-small" id="btnClearReviewBatch">Clear Batch</button>
+        </div>
+    `;
+    resultsContainer.appendChild(summaryCard);
+
+    summaryCard.querySelector('#btnApproveAllMatches').addEventListener('click', approveAllMatches);
+    summaryCard.querySelector('#btnClearReviewBatch').addEventListener('click', () => clearResults(true));
 
     matchList.forEach((match, index) => {
-        const confidence = (match.confidence * 100).toFixed(1);
+        const confidenceScore = Number(match.confidence) || 0;
+        const berScore = Number(match.ber) || 0;
+        const confidence = (confidenceScore * 100).toFixed(1);
         let confidenceClass = 'high';
-        if (match.confidence < 0.7) confidenceClass = 'low';
-        else if (match.confidence < 0.9) confidenceClass = 'medium';
+        if (confidenceScore < 0.7) confidenceClass = 'low';
+        else if (confidenceScore < 0.9) confidenceClass = 'medium';
+
+        const decision = normalizeDecision(match.decision);
 
         const resultItem = document.createElement('div');
-        resultItem.className = 'result-item';
+        resultItem.className = `result-item decision-${decision}`;
         resultItem.innerHTML = `
             <div class="result-header">
                 <strong>Match #${index + 1}</strong>
-                <span class="result-confidence ${confidenceClass}">
-                    ${confidence}% confidence
-                </span>
+                <div class="result-header-meta">
+                    <span class="review-pill ${decision}">${decision}</span>
+                    <span class="result-confidence ${confidenceClass}">
+                        ${confidence}% confidence
+                    </span>
+                </div>
             </div>
             <div class="result-files">
                 <div class="result-file original">
@@ -641,20 +690,111 @@ function displayResults(matchList) {
                     <span>${escapeHtml(match.new_name)}</span>
                 </div>
             </div>
-            <div style="margin-top: 8px; font-size: 12px; color: var(--text-secondary);">
-                Matched: ${escapeHtml(match.matched_ref)} (BER: ${match.ber.toFixed(3)})
+            <div class="result-match-meta">
+                Matched: ${escapeHtml(match.matched_ref)} (BER: ${berScore.toFixed(3)})
+            </div>
+            <div class="review-controls">
+                <input class="review-name-input" type="text" value="${escapeHtml(match.new_name)}" />
+                <div class="review-actions">
+                    <button class="btn btn-success btn-small">Approve</button>
+                    <button class="btn btn-secondary btn-small">Skip</button>
+                    <button class="btn btn-text btn-small">Reset</button>
+                </div>
             </div>
         `;
+
+        const nameInput = resultItem.querySelector('.review-name-input');
+        const [approveBtn, skipBtn, resetBtn] = resultItem.querySelectorAll('button');
+
+        approveBtn.addEventListener('click', () => {
+            updateMatchDecision(match.id, 'approved', nameInput.value.trim() || match.new_name);
+        });
+        skipBtn.addEventListener('click', () => {
+            updateMatchDecision(match.id, 'skipped', nameInput.value.trim() || match.new_name);
+        });
+        resetBtn.addEventListener('click', () => {
+            nameInput.value = match.suggested_name || match.new_name;
+            updateMatchDecision(match.id, 'pending', nameInput.value);
+        });
+
         resultsContainer.appendChild(resultItem);
     });
 }
 
+function normalizeSummary(summary) {
+    return {
+        pending: Number(summary.pending) || 0,
+        approved: Number(summary.approved) || 0,
+        skipped: Number(summary.skipped) || 0,
+    };
+}
+
+function normalizeDecision(decision) {
+    return ['pending', 'approved', 'skipped'].includes(decision) ? decision : 'pending';
+}
+
 // ==================== Clear Functions ====================
-function clearResults() {
-    matches = [];
-    document.getElementById('matchCount').textContent = '0';
-    document.getElementById('resultsCard').style.display = 'none';
-    addLog('Results cleared', 'info');
+function clearResults(remote = true) {
+    const applyClear = () => {
+        matches = [];
+        document.getElementById('matchCount').textContent = '0';
+        document.getElementById('resultsCard').style.display = 'none';
+        document.getElementById('btnRename').disabled = true;
+        addLog('Results cleared', 'info');
+    };
+
+    if (!remote) {
+        applyClear();
+        return;
+    }
+
+    fetch('/api/matches', { method: 'DELETE' })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                applyClear();
+            } else {
+                addLog('Error clearing results: ' + (data.error || 'Unknown error'), 'error');
+            }
+        })
+        .catch(err => {
+            addLog('Error clearing results: ' + err.message, 'error');
+        });
+}
+
+function approveAllMatches() {
+    fetch('/api/matches/approve-all', { method: 'POST' })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            fetchMatches();
+            addLog('Approved all staged matches', 'success');
+        } else {
+            addLog('Approve-all failed: ' + (data.error || 'Unknown error'), 'error');
+        }
+    })
+    .catch(err => {
+        addLog('Error approving all matches: ' + err.message, 'error');
+    });
+}
+
+function updateMatchDecision(matchId, decision, newName) {
+    fetch(`/api/matches/${encodeURIComponent(matchId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision, new_name: newName })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            fetchMatches();
+        } else {
+            addLog('Could not update review state: ' + (data.error || 'Unknown error'), 'error');
+        }
+    })
+    .catch(err => {
+        addLog('Error updating match decision: ' + err.message, 'error');
+    });
 }
 
 function clearLog() {

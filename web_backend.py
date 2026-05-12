@@ -29,6 +29,7 @@ from shortssync import (
     is_shazam_available,
     ShazamCache
 )
+from shortssync.web_state import WebStateStore, validate_review_filename
 
 try:
     import yt_dlp
@@ -39,7 +40,7 @@ except ImportError:
 # Import config with better error handling
 try:
     import config
-    defaults = config.get_defaults()
+    default_config = config.get_defaults()
 except Exception as e:
     print(f"Warning: Could not load config.py: {e}")
     # Create minimal defaults
@@ -55,6 +56,8 @@ except Exception as e:
                 'move_files': False,
             }
     config = MockConfig()
+    default_config = config.get_defaults()
+
 
 # ==================== Configuration ====================
 app = Flask(__name__, static_folder='web_frontend', static_url_path='')
@@ -76,8 +79,11 @@ processing_status = {
 }
 
 reference_fingerprints = {}
-match_results = []
 processing_lock = threading.Lock()
+state_store = WebStateStore(
+    os.environ.get('SHORTSSYNC_WEB_STATE', os.path.join('.shortssync', 'web_state.json')),
+    default_config,
+)
 
 # Check Shazam availability
 SHAZAM_AVAILABLE = is_shazam_available()
@@ -96,6 +102,11 @@ def emit_status(message, progress=None, total=None):
     # Emit to all connected clients
     socketio.emit('status_update', processing_status)
     print(f"[Status] {message}")
+
+
+def json_object_body():
+    data = request.get_json(silent=True)
+    return data if isinstance(data, dict) else None
 
 # ==================== API Routes ====================
 
@@ -123,21 +134,24 @@ def health_check():
 @app.route('/api/config', methods=['GET'])
 def get_config():
     """Get current configuration."""
-    try:
-        defaults = config.get_defaults()
-    except Exception:
-        defaults = {}
     return jsonify({
-        'config': defaults,
+        'config': state_store.get_config(),
         'processing': processing_status
     })
 
 @app.route('/api/config', methods=['POST'])
 def update_config():
-    """Update configuration (runtime only, not saved to file)."""
-    _ = request.json
-    # In a production app, you'd validate and save this
-    return jsonify({'success': True, 'message': 'Configuration updated'})
+    """Persist runtime configuration for the web app."""
+    data = json_object_body()
+    if data is None:
+        return jsonify({'error': 'JSON object body is required'}), 400
+
+    updated = state_store.update_config(data)
+    return jsonify({
+        'success': True,
+        'message': 'Configuration updated',
+        'config': updated,
+    })
 
 @app.route('/api/shazam/status', methods=['GET'])
 def shazam_status():
@@ -155,9 +169,15 @@ def index_reference_audio():
     if processing_status['is_processing']:
         return jsonify({'error': 'Processing already in progress'}), 409
 
-    data = request.json
+    data = json_object_body()
+    if data is None:
+        return jsonify({'error': 'JSON object body is required'}), 400
+
     audio_dir = data.get('audio_dir')
     use_shazam = data.get('use_shazam', False) and SHAZAM_AVAILABLE
+
+    if not audio_dir:
+        return jsonify({'error': 'Audio directory is required'}), 400
 
     # Validate and sanitize path (prevent path traversal)
     audio_dir = os.path.abspath(os.path.normpath(audio_dir))
@@ -300,7 +320,7 @@ def list_reference_audio():
 @app.route('/api/videos/match', methods=['POST'])
 def match_videos():
     """Match videos against reference audio."""
-    global match_results, processing_status, reference_fingerprints
+    global processing_status, reference_fingerprints
 
     if processing_status['is_processing']:
         return jsonify({'error': 'Processing already in progress'}), 409
@@ -308,15 +328,25 @@ def match_videos():
     if not reference_fingerprints:
         return jsonify({'error': 'No reference audio indexed. Index first.'}), 400
 
-    data = request.json
+    data = json_object_body()
+    if data is None:
+        return jsonify({'error': 'JSON object body is required'}), 400
+
     video_dir = data.get('video_dir')
     audio_dir = data.get('audio_dir', '')
     fixed_tags = data.get('fixed_tags', '#shorts')
     pool_tags = data.get('pool_tags', '#fyp #viral #trending')
     preserve_exact = data.get('preserve_exact_names', False)
-    threshold = data.get('threshold', 0.15)
     use_shazam_fallback = data.get('use_shazam_fallback', False) and SHAZAM_AVAILABLE
     save_new_audio = data.get('save_new_audio', False) and audio_dir
+
+    if not video_dir:
+        return jsonify({'error': 'Video directory is required'}), 400
+
+    try:
+        threshold = float(data.get('threshold', 0.15))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Threshold must be a number'}), 400
 
     # Validate and sanitize paths
     video_dir = os.path.abspath(os.path.normpath(video_dir))
@@ -330,14 +360,13 @@ def match_videos():
 
     # Start matching in background thread
     def match_task():
-        global match_results, processing_status, reference_fingerprints
+        global processing_status, reference_fingerprints
         
         local_use_shazam = use_shazam_fallback
 
         with processing_lock:
             processing_status['is_processing'] = True
             processing_status['current_task'] = 'matching'
-            match_results = []
 
             try:
                 emit_status("Starting video matching...")
@@ -537,7 +566,7 @@ def match_videos():
                         emit_status(f"Error processing {f}: {str(e)}", i, total)
                     # VideoAudioExtractor context manager handles cleanup
 
-                match_results = matches
+                state_store.set_review_batch(video_dir, matches)
                 if shazam_matches > 0:
                     emit_status(f"✅ Matching complete: {len(matches)} matches ({shazam_matches} via Shazam)", total, total)
                 else:
@@ -559,10 +588,75 @@ def match_videos():
 
 @app.route('/api/matches', methods=['GET'])
 def get_matches():
-    """Get current match results."""
+    """Get current staged match results."""
+    review_batch = state_store.get_review_batch()
+    if review_batch is None:
+        return jsonify({
+            'count': 0,
+            'matches': [],
+            'summary': {'pending': 0, 'approved': 0, 'skipped': 0, 'total': 0},
+            'batch': None,
+        })
+
     return jsonify({
-        'count': len(match_results),
-        'matches': match_results
+        'count': len(review_batch['matches']),
+        'matches': review_batch['matches'],
+        'summary': review_batch['summary'],
+        'batch': {
+            'id': review_batch.get('id'),
+            'video_dir': review_batch.get('video_dir'),
+            'created_at': review_batch.get('created_at'),
+        },
+    })
+
+
+@app.route('/api/matches', methods=['DELETE'])
+def clear_matches():
+    """Clear the current staged review batch."""
+    state_store.clear_review_batch()
+    return jsonify({'success': True})
+
+
+@app.route('/api/matches/approve-all', methods=['POST'])
+def approve_all_matches():
+    """Approve all staged matches except explicitly skipped ones."""
+    batch = state_store.approve_all()
+    if batch is None:
+        return jsonify({'error': 'No matches to approve'}), 404
+
+    return jsonify({
+        'success': True,
+        'matches': batch['matches'],
+        'summary': batch['summary'],
+    })
+
+
+@app.route('/api/matches/<match_id>', methods=['PATCH'])
+def update_match_review(match_id):
+    """Update the staged review decision for a match."""
+    data = request.get_json(silent=True)
+    if data is None:
+        data = {}
+    elif not isinstance(data, dict):
+        return jsonify({'error': 'JSON object body is required'}), 400
+
+    try:
+        updated = state_store.update_match(
+            match_id,
+            decision=data.get('decision'),
+            new_name=data.get('new_name'),
+        )
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    if updated is None:
+        return jsonify({'error': 'Match not found'}), 404
+
+    batch = state_store.get_review_batch()
+    return jsonify({
+        'success': True,
+        'match': updated,
+        'summary': batch['summary'] if batch else {'pending': 0, 'approved': 0, 'skipped': 0, 'total': 0},
     })
 
 @app.route('/api/videos/rename', methods=['POST'])
@@ -573,15 +667,39 @@ def rename_videos():
     if processing_status['is_processing']:
         return jsonify({'error': 'Processing already in progress'}), 409
 
-    if not match_results:
-        return jsonify({'error': 'No matches to rename'}), 400
+    batch = state_store.get_review_batch()
+    if not batch:
+        return jsonify({'error': 'No approved matches to rename'}), 400
 
-    data = request.json
-    video_dir = data.get('video_dir')
+    approved_matches = [
+        match for match in batch['matches']
+        if match.get('decision') == 'approved'
+    ]
+    if not approved_matches:
+        return jsonify({'error': 'No approved matches to rename'}), 400
+
+    data = request.get_json(silent=True)
+    if data is None:
+        data = {}
+    elif not isinstance(data, dict):
+        return jsonify({'error': 'JSON object body is required'}), 400
+
+    batch_video_dir = batch.get('video_dir')
+    if not batch_video_dir:
+        return jsonify({'error': 'Review batch is missing its video directory'}), 400
+
+    video_dir = os.path.abspath(os.path.normpath(batch_video_dir))
+    requested_video_dir = data.get('video_dir')
+    if requested_video_dir:
+        requested_video_dir = os.path.abspath(os.path.normpath(requested_video_dir))
+        if requested_video_dir != video_dir:
+            return jsonify({'error': 'Staged review batch belongs to a different video directory'}), 409
+
     move_files = data.get('move_files', False)
+    if not isinstance(move_files, bool):
+        return jsonify({'error': 'move_files must be a boolean'}), 400
 
     # Validate and sanitize path
-    video_dir = os.path.abspath(os.path.normpath(video_dir))
     if not os.path.exists(video_dir) or not os.path.isdir(video_dir):
         return jsonify({'error': 'Invalid video directory'}), 400
 
@@ -594,7 +712,7 @@ def rename_videos():
             processing_status['current_task'] = 'renaming'
 
             try:
-                total = len(match_results)
+                total = len(approved_matches)
                 emit_status("Starting rename operation...", 0, total)
 
                 target_dir = os.path.join(video_dir, "_Ready") if move_files else video_dir
@@ -604,20 +722,52 @@ def rename_videos():
                     emit_status(f"Created directory: {target_dir}")
 
                 success_count = 0
+                success_ids = []
                 errors = []
 
-                for i, match in enumerate(match_results, 1):
-                    orig = match['original']
-                    new = match['new_name']
+                for i, match in enumerate(approved_matches, 1):
+                    orig = match.get('original')
+                    new = match.get('new_name')
 
                     emit_status(f"Renaming {orig}...", i, total)
 
-                    src = os.path.join(video_dir, orig)
-                    dst = os.path.join(target_dir, new)
+                    filename_error = (
+                        validate_review_filename(orig, 'Original name')
+                        or validate_review_filename(new, 'New name')
+                    )
+                    if filename_error:
+                        error_msg = f"Error renaming {orig}: {filename_error}"
+                        errors.append(error_msg)
+                        emit_status(f"❌ {error_msg}", i, total)
+                        continue
+
+                    target_root = os.path.abspath(target_dir)
+                    src = os.path.abspath(os.path.join(video_dir, orig))
+                    dst = os.path.abspath(os.path.join(target_root, new))
 
                     try:
+                        if os.path.dirname(src) != video_dir or os.path.dirname(dst) != target_root:
+                            raise ValueError('Resolved path is outside the expected directory')
+                        if not os.path.exists(src):
+                            raise FileNotFoundError(src)
+                        if os.path.lexists(dst):
+                            try:
+                                same_file = os.path.samefile(src, dst)
+                            except OSError:
+                                same_file = False
+
+                            if same_file:
+                                success_count += 1
+                                if match.get('id'):
+                                    success_ids.append(match['id'])
+                                emit_status(f"✅ Already named {orig}", i, total)
+                                continue
+                            raise FileExistsError(dst)
+
                         os.rename(src, dst)
                         success_count += 1
+                        if match.get('id'):
+                            success_ids.append(match['id'])
                         emit_status(f"✅ Renamed {orig} → {new}", i, total)
                     except Exception as e:
                         error_msg = f"Error renaming {orig}: {str(e)}"
@@ -628,6 +778,9 @@ def rename_videos():
                 if errors:
                     message += f" ({len(errors)} errors)"
                 emit_status(message, total, total)
+
+                if success_ids:
+                    state_store.remove_matches(success_ids)
 
             except Exception as e:
                 emit_status(f"Error during rename: {str(e)}")
@@ -659,10 +812,13 @@ def download_video():
     if processing_status['is_processing']:
         return jsonify({'error': 'Processing already in progress'}), 409
 
-    data = request.json
+    data = json_object_body()
+    if data is None:
+        return jsonify({'error': 'JSON object body is required'}), 400
+
     url = data.get('url')
     output_dir = data.get('output_dir')
-    format_type = data.get('format', 'video')  # 'video' or 'audio'
+    format_type = data.get('format', 'video')
 
     if not url:
         return jsonify({'error': 'URL is required'}), 400
@@ -754,20 +910,19 @@ def download_mp3():
     if processing_status['is_processing']:
         return jsonify({'error': 'Processing already in progress'}), 409
 
-    data = request.json
-    urls_data = data.get('urls', [])  # List of {url, filename} objects
+    data = json_object_body()
+    if data is None:
+        return jsonify({'error': 'JSON object body is required'}), 400
+
+    urls_data = data.get('urls', [])
     
     if not urls_data or not isinstance(urls_data, list):
         return jsonify({'error': 'URLs list is required'}), 400
 
-    # Get audio_dir from config
-    try:
-        settings = config.get_defaults()
-        audio_dir = settings.get('audio_dir')
-        if not audio_dir:
-            return jsonify({'error': 'audio_dir not configured in config.py'}), 400
-    except Exception as e:
-        return jsonify({'error': f'Failed to load config: {str(e)}'}), 500
+    settings = state_store.get_config()
+    audio_dir = settings.get('audio_dir')
+    if not audio_dir:
+        return jsonify({'error': 'audio_dir is not configured'}), 400
 
     # Validate audio directory
     audio_dir = os.path.abspath(os.path.normpath(audio_dir))

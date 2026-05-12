@@ -394,6 +394,11 @@ body {
     background: rgba(0, 102, 204, 0.1);
 }
 
+.btn-small {
+    padding: 8px 12px;
+    font-size: 12px;
+}
+
 /* ==================== Action Section ==================== */
 .action-section {
     display: flex;
@@ -476,6 +481,18 @@ body {
     transition: background 0.2s;
 }
 
+.result-item.decision-approved {
+    border-left: 4px solid var(--success);
+}
+
+.result-item.decision-skipped {
+    border-left: 4px solid var(--text-secondary);
+}
+
+.result-item.decision-pending {
+    border-left: 4px solid var(--warning);
+}
+
 .result-item:hover {
     background: var(--bg-secondary);
 }
@@ -489,6 +506,12 @@ body {
     justify-content: space-between;
     align-items: center;
     margin-bottom: 10px;
+}
+
+.result-header-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .result-confidence {
@@ -540,6 +563,79 @@ body {
 .result-file.new {
     color: var(--success);
     font-weight: 500;
+}
+
+.result-match-meta {
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.review-summary {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+    background: #eef4fb;
+    flex-wrap: wrap;
+}
+
+.review-summary-stats,
+.review-summary-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.review-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: capitalize;
+}
+
+.review-pill.pending {
+    background: rgba(255, 193, 7, 0.16);
+    color: #9a6c00;
+}
+
+.review-pill.approved {
+    background: rgba(40, 167, 69, 0.12);
+    color: var(--success);
+}
+
+.review-pill.skipped {
+    background: rgba(108, 117, 125, 0.14);
+    color: var(--text-secondary);
+}
+
+.review-controls {
+    display: flex;
+    gap: 12px;
+    margin-top: 14px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.review-name-input {
+    flex: 1 1 320px;
+    min-width: 240px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: inherit;
+}
+
+.review-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
 }
 
 /* ==================== Log ==================== */
@@ -638,5 +734,16 @@ body {
 
     .stats-group {
         justify-content: space-around;
+    }
+
+    .result-header,
+    .review-controls,
+    .review-summary {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .review-name-input {
+        min-width: 0;
     }
 }

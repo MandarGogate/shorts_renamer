@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 .fingerprints/
 .shazam_cache/
+.shortssync/
 # C extensions
 *.so
 
