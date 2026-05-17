@@ -643,6 +643,15 @@ def monitor_mode(args, defaults):
                         
                         src = filepath
                         dst = os.path.join(target_dir, new_name)
+                        if os.path.lexists(dst):
+                            try:
+                                if os.path.samefile(src, dst):
+                                    print(f"[{timestamp}] ✅ Already named: {new_name}")
+                                    continue
+                            except OSError:
+                                pass
+                            print(f"[{timestamp}] ⚠️  Target exists, skipping rename: {new_name}")
+                            continue
                         os.rename(src, dst)
                         
                         processed_count += 1
@@ -704,7 +713,9 @@ Monitor Mode (auto-process new files):
     parser.add_argument('--rename-audio', action='store_true', 
                        help='Rename audio files based on Shazam identification')
     parser.add_argument('--dry-run', action='store_true',
-                       help='Preview changes without renaming (use with --rename-audio)')
+                       help='Preview changes without renaming')
+    parser.add_argument('-y', '--yes', action='store_true',
+                       help='Skip confirmation prompt before video renames')
     parser.add_argument('--shazam', action='store_true', default=None, help='Use Shazam to identify reference audio files during indexing (overrides config)')
     parser.add_argument('--no-shazam', dest='shazam', action='store_false', default=None, help='Disable Shazam for reference audio identification')
     parser.add_argument('--shazam-only', action='store_true', dest='shazam_only', default=None, help='Use Shazam for renaming without running Chromaprint matching first')
@@ -1311,10 +1322,15 @@ Monitor Mode (auto-process new files):
         print(f"  {orig}")
         print(f"  → {new} ({method_icon} BER: {ber:.3f})\n")
     
-    # response = input(f"\nRename {len(matches)} files? [y/N]: ").strip().lower()
-    # if response != 'y':
-    #     print("Cancelled.")
-    #     sys.exit(0)
+    if args.dry_run:
+        print("\n[DRY RUN] No files were renamed.")
+        sys.exit(0)
+
+    if not args.yes:
+        response = input(f"\nRename {len(matches)} files? [y/N]: ").strip().lower()
+        if response != 'y':
+            print("Cancelled.")
+            sys.exit(0)
     
     # Rename
     target_dir = os.path.join(video_dir, "_Ready") if move_files else video_dir
@@ -1328,6 +1344,19 @@ Monitor Mode (auto-process new files):
         src = os.path.join(video_dir, orig)
         dst = os.path.join(target_dir, new)
         try:
+            if not os.path.exists(src):
+                print(f"❌ Missing source file: {orig}")
+                continue
+            if os.path.lexists(dst):
+                try:
+                    if os.path.samefile(src, dst):
+                        print(f"✅ Already named: {orig}")
+                        count += 1
+                        continue
+                except OSError:
+                    pass
+                print(f"❌ Target exists, skipping: {new}")
+                continue
             os.rename(src, dst)
             count += 1
             print(f"✅ {orig} → {new}")

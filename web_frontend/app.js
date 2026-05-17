@@ -11,7 +11,9 @@ let config = {
     fixed_tags: '#shorts',
     pool_tags: '#fyp #viral #trending #foryou #reels',
     move_files: false,
-    preserve_exact_names: false
+    preserve_exact_names: false,
+    shazam_only_mode: false,
+    shazam_fallback_any: false
 };
 
 // ==================== Initialization ====================
@@ -99,6 +101,7 @@ function attachEventListeners() {
     document.getElementById('poolTags').addEventListener('change', saveConfig);
     document.getElementById('moveFiles').addEventListener('change', saveConfig);
     document.getElementById('preserveExact').addEventListener('change', saveConfig);
+    document.getElementById('shazamOnlyMode')?.addEventListener('change', saveConfig);
 
     // Action buttons
     document.getElementById('btnDownload').addEventListener('click', startDownload);
@@ -143,6 +146,10 @@ function applyConfigToInputs(nextConfig) {
     document.getElementById('poolTags').value = config.pool_tags || '#fyp #viral #trending';
     document.getElementById('moveFiles').checked = Boolean(config.move_files);
     document.getElementById('preserveExact').checked = Boolean(config.preserve_exact_names);
+    const shazamOnlyEl = document.getElementById('shazamOnlyMode');
+    if (shazamOnlyEl) {
+        shazamOnlyEl.checked = Boolean(config.shazam_only_mode);
+    }
     document.getElementById('mp3AudioDir').value = config.audio_dir || 'Not configured';
     localStorage.setItem('shortsync_config', JSON.stringify(config));
 }
@@ -155,6 +162,8 @@ function saveConfig() {
         pool_tags: document.getElementById('poolTags').value.trim(),
         move_files: document.getElementById('moveFiles').checked,
         preserve_exact_names: document.getElementById('preserveExact').checked,
+        shazam_only_mode: document.getElementById('shazamOnlyMode')?.checked || false,
+        shazam_fallback_any: document.getElementById('shazamOnlyMode')?.checked || false,
     };
 
     applyConfigToInputs(nextConfig);
@@ -204,8 +213,12 @@ function checkShazamStatus() {
         .then(res => res.json())
         .then(data => {
             const shazamOption = document.getElementById('shazamOption');
+            const saveAudioOption = document.getElementById('saveAudioOption');
             if (data.available && shazamOption) {
                 shazamOption.style.display = 'block';
+                if (saveAudioOption) {
+                    saveAudioOption.style.display = 'block';
+                }
                 addLog('Shazam integration available', 'info');
             }
         })
@@ -414,6 +427,7 @@ function startMatching() {
     
     const useShazamFallback = document.getElementById('useShazamFallback')?.checked || false;
     const saveNewAudio = document.getElementById('saveNewAudio')?.checked || false;
+    const shazamOnlyMode = document.getElementById('shazamOnlyMode')?.checked || false;
 
     fetch('/api/videos/match', {
         method: 'POST',
@@ -424,7 +438,9 @@ function startMatching() {
             fixed_tags: config.fixed_tags,
             pool_tags: config.pool_tags,
             preserve_exact_names: config.preserve_exact_names,
-            use_shazam_fallback: useShazamFallback,
+            use_shazam_fallback: useShazamFallback || shazamOnlyMode,
+            shazam_only_mode: shazamOnlyMode,
+            shazam_fallback_any: shazamOnlyMode,
             save_new_audio: saveNewAudio
         })
     })

@@ -8,6 +8,7 @@ import os
 import sys
 import threading
 import socket
+import subprocess
 from datetime import datetime
 import secrets
 
@@ -27,7 +28,8 @@ from shortssync import (
     VideoAudioExtractor,
     ShazamClient,
     is_shazam_available,
-    ShazamCache
+    ShazamCache,
+    RenameLogger,
 )
 from shortssync.web_state import WebStateStore, validate_review_filename
 
@@ -107,6 +109,43 @@ def emit_status(message, progress=None, total=None):
 def json_object_body():
     data = request.get_json(silent=True)
     return data if isinstance(data, dict) else None
+
+
+def word_match_score(a: str, b: str) -> float:
+    a_words = set(a.replace('_', ' ').replace('-', ' ').split())
+    b_words = set(b.replace('_', ' ').replace('-', ' ').split())
+    if not a_words or not b_words:
+        return 0.0
+    return len(a_words & b_words) / max(len(a_words), len(b_words))
+
+
+def find_best_reference_name(shazam_name: str, reference_names, min_score: float = 50.0):
+    shazam_lower = shazam_name.lower()
+    shazam_parts = shazam_lower.split(' - ', 1)
+    shazam_artist = shazam_parts[0].strip() if len(shazam_parts) > 0 else ""
+    shazam_title = shazam_parts[1].strip() if len(shazam_parts) > 1 else ""
+
+    best_match = None
+    best_score = 0.0
+    for ref_name in reference_names:
+        ref_base = os.path.splitext(ref_name)[0].lower()
+
+        if shazam_lower in ref_base or ref_base in shazam_lower:
+            return ref_name, 100.0
+
+        ref_parts = ref_base.split(' - ', 1)
+        ref_artist = ref_parts[0].strip() if len(ref_parts) > 0 else ""
+        ref_title = ref_parts[1].strip() if len(ref_parts) > 1 else ""
+
+        artist_score = word_match_score(shazam_artist, ref_artist)
+        title_score = word_match_score(shazam_title, ref_title)
+        score = (artist_score * 0.3 + title_score * 0.7) * 100
+
+        if score > best_score and score >= min_score:
+            best_score = score
+            best_match = ref_name
+
+    return best_match, best_score
 
 # ==================== API Routes ====================
 
@@ -325,9 +364,6 @@ def match_videos():
     if processing_status['is_processing']:
         return jsonify({'error': 'Processing already in progress'}), 409
 
-    if not reference_fingerprints:
-        return jsonify({'error': 'No reference audio indexed. Index first.'}), 400
-
     data = json_object_body()
     if data is None:
         return jsonify({'error': 'JSON object body is required'}), 400
@@ -337,11 +373,20 @@ def match_videos():
     fixed_tags = data.get('fixed_tags', '#shorts')
     pool_tags = data.get('pool_tags', '#fyp #viral #trending')
     preserve_exact = data.get('preserve_exact_names', False)
+    shazam_only_mode = bool(data.get('shazam_only_mode', False))
     use_shazam_fallback = data.get('use_shazam_fallback', False) and SHAZAM_AVAILABLE
+    shazam_fallback_any = bool(data.get('shazam_fallback_any', False))
     save_new_audio = data.get('save_new_audio', False) and audio_dir
+    if shazam_only_mode:
+        shazam_fallback_any = True
+        use_shazam_fallback = SHAZAM_AVAILABLE
 
     if not video_dir:
         return jsonify({'error': 'Video directory is required'}), 400
+    if shazam_only_mode and not SHAZAM_AVAILABLE:
+        return jsonify({'error': 'Shazam-only mode requires shazamio'}), 400
+    if not shazam_only_mode and not reference_fingerprints:
+        return jsonify({'error': 'No reference audio indexed. Index first.'}), 400
 
     try:
         threshold = float(data.get('threshold', 0.15))
@@ -362,7 +407,7 @@ def match_videos():
     def match_task():
         global processing_status, reference_fingerprints
         
-        local_use_shazam = use_shazam_fallback
+        local_use_shazam = use_shazam_fallback or shazam_only_mode
 
         with processing_lock:
             processing_status['is_processing'] = True
@@ -371,10 +416,12 @@ def match_videos():
             try:
                 emit_status("Starting video matching...")
 
-                fpcalc = get_fpcalc_path()
-                if not fpcalc:
-                    emit_status("Error: fpcalc not found")
-                    return
+                fpcalc = None
+                if not shazam_only_mode:
+                    fpcalc = get_fpcalc_path()
+                    if not fpcalc:
+                        emit_status("Error: fpcalc not found")
+                        return
                 
                 # Initialize Shazam client if fallback is enabled
                 shazam_client = None
@@ -412,77 +459,77 @@ def match_videos():
 
                             extractor.extract_audio()
 
-                            # Get fingerprint
-                            q_fp = get_fingerprint_cached(
-                                temp_wav,
-                                fpcalc,
-                                app.config['FINGERPRINT_CACHE'],
-                                cache_key_source=full_path,
-                            )
-                            if q_fp is None or len(q_fp) == 0:
-                                emit_status(f"Fingerprint error for {f}", i, total)
-                                continue
-
-                            q_bits = np.unpackbits(q_fp.view(np.uint8))
-                            n_q = len(q_bits)
-
-                            # Find best match using sliding window
+                            matched = False
                             best_ber = 1.0
-                            best_ref = None
-
-                            for ref_name, r_bits in reference_fingerprints.items():
-                                n_r = len(r_bits)
-                                if n_q > n_r:
+                            if not shazam_only_mode:
+                                # Get fingerprint
+                                q_fp = get_fingerprint_cached(
+                                    temp_wav,
+                                    fpcalc,
+                                    app.config['FINGERPRINT_CACHE'],
+                                    cache_key_source=full_path,
+                                )
+                                if q_fp is None or len(q_fp) == 0:
+                                    emit_status(f"Fingerprint error for {f}", i, total)
                                     continue
 
-                                n_windows = (n_r // 32) - len(q_fp) + 1
-                                if n_windows < 1:
-                                    continue
+                                q_bits = np.unpackbits(q_fp.view(np.uint8))
+                                n_q = len(q_bits)
 
-                                min_dist = float('inf')
-                                for w in range(n_windows):
-                                    start = w * 32
-                                    end = start + n_q
-                                    sub_r = r_bits[start:end]
-                                    dist = np.count_nonzero(np.bitwise_xor(q_bits, sub_r))
-                                    if dist < min_dist:
-                                        min_dist = dist
-                                        if min_dist == 0:
+                                # Find best match using sliding window
+                                best_ref = None
+
+                                for ref_name, r_bits in reference_fingerprints.items():
+                                    n_r = len(r_bits)
+                                    if n_q > n_r:
+                                        continue
+
+                                    n_windows = (n_r // 32) - len(q_fp) + 1
+                                    if n_windows < 1:
+                                        continue
+
+                                    min_dist = float('inf')
+                                    for w in range(n_windows):
+                                        start = w * 32
+                                        end = start + n_q
+                                        sub_r = r_bits[start:end]
+                                        dist = np.count_nonzero(np.bitwise_xor(q_bits, sub_r))
+                                        if dist < min_dist:
+                                            min_dist = dist
+                                            if min_dist == 0:
+                                                break
+
+                                    ber = min_dist / n_q if n_q > 0 else 1.0
+                                    if ber < best_ber:
+                                        best_ber = ber
+                                        best_ref = ref_name
+                                        if best_ber == 0:
                                             break
 
-                                ber = min_dist / n_q if n_q > 0 else 1.0
-                                if ber < best_ber:
-                                    best_ber = ber
-                                    best_ref = ref_name
-                                    if best_ber == 0:
-                                        break
+                                # Check if match is good enough
+                                if best_ref and best_ber < threshold:
+                                    new_name = generate_name(
+                                        ref_name=best_ref,
+                                        vid_name=f,
+                                        vid_dir=video_dir,
+                                        used_names=proposed_names,
+                                        fixed_tags=fixed_tags,
+                                        pool_tags=pool_tags,
+                                        preserve_exact=preserve_exact
+                                    )
+                                    proposed_names.add(new_name.lower())
 
-                            # Check if match is good enough
-                            matched = False
-                            if best_ref and best_ber < threshold:
-                                # Use generate_name which now properly checks both used_names and file existence
-                                new_name = generate_name(
-                                    ref_name=best_ref,
-                                    vid_name=f,
-                                    vid_dir=video_dir,
-                                    used_names=proposed_names,
-                                    fixed_tags=fixed_tags,
-                                    pool_tags=pool_tags,
-                                    preserve_exact=preserve_exact
-                                )
-                                proposed_names.add(new_name.lower())
-
-                                match = {
-                                    'original': f,
-                                    'new_name': new_name,
-                                    'matched_ref': best_ref,
-                                    'ber': float(best_ber),
-                                    'confidence': float(1.0 - best_ber),
-                                    'match_type': 'fingerprint'
-                                }
-                                matches.append(match)
-                                emit_status(f"✅ Matched {f} → {best_ref} (BER: {best_ber:.3f})", i, total)
-                                matched = True
+                                    match = {
+                                        'original': f,
+                                        'new_name': new_name,
+                                        'matched_ref': best_ref,
+                                        'ber': float(best_ber),
+                                        'confidence': float(1.0 - best_ber),
+                                        'match_type': 'fingerprint'
+                                    }
+                                    matches.append(match)
+                                    emit_status(f"✅ Matched {f} → {best_ref} (BER: {best_ber:.3f})", i, total)
+                                    matched = True
                             
                             # Try Shazam fallback if no match and Shazam is enabled
                             if not matched and local_use_shazam and shazam_client:
@@ -493,16 +540,43 @@ def match_videos():
                                     
                                     if result:
                                         shazam_name = result.get_filename_base()
-                                        # Look for this song in reference library by name
-                                        for ref_name in reference_fingerprints.keys():
-                                            # Check if Shazam name matches reference (case insensitive, allow partial)
-                                            ref_base = os.path.splitext(ref_name)[0].lower()
-                                            shazam_lower = shazam_name.lower()
-                                            
-                                            if shazam_lower in ref_base or ref_base in shazam_lower:
-                                                # Found a match via Shazam!
+                                        best_ref, best_score = find_best_reference_name(
+                                            shazam_name,
+                                            reference_fingerprints.keys(),
+                                        )
+
+                                        if best_ref:
+                                            new_name = generate_name(
+                                                ref_name=best_ref,
+                                                vid_name=f,
+                                                vid_dir=video_dir,
+                                                used_names=proposed_names,
+                                                fixed_tags=fixed_tags,
+                                                pool_tags=pool_tags,
+                                                preserve_exact=preserve_exact
+                                            )
+                                            proposed_names.add(new_name.lower())
+
+                                            match = {
+                                                'original': f,
+                                                'new_name': new_name,
+                                                'matched_ref': best_ref,
+                                                'ber': 0.0,
+                                                'confidence': 1.0,
+                                                'match_type': 'shazam',
+                                                'shazam_artist': result.artist,
+                                                'shazam_title': result.title,
+                                                'similarity_score': best_score,
+                                            }
+                                            matches.append(match)
+                                            emit_status(f"🎵 Shazam matched {f} → {best_ref}", i, total)
+                                            shazam_matches += 1
+                                            matched = True
+                                        
+                                        if not matched:
+                                            if shazam_fallback_any:
                                                 new_name = generate_name(
-                                                    ref_name=ref_name,
+                                                    ref_name=shazam_name,
                                                     vid_name=f,
                                                     vid_dir=video_dir,
                                                     used_names=proposed_names,
@@ -511,30 +585,25 @@ def match_videos():
                                                     preserve_exact=preserve_exact
                                                 )
                                                 proposed_names.add(new_name.lower())
-
-                                                match = {
+                                                matches.append({
                                                     'original': f,
                                                     'new_name': new_name,
-                                                    'matched_ref': ref_name,
-                                                    'ber': 0.0,  # Perfect match via Shazam
+                                                    'matched_ref': shazam_name,
+                                                    'ber': 0.0,
                                                     'confidence': 1.0,
-                                                    'match_type': 'shazam',
+                                                    'match_type': 'shazam_new',
                                                     'shazam_artist': result.artist,
                                                     'shazam_title': result.title
-                                                }
-                                                matches.append(match)
-                                                emit_status(f"🎵 Shazam matched {f} → {ref_name}", i, total)
+                                                })
                                                 shazam_matches += 1
                                                 matched = True
-                                                break
-                                        
-                                        if not matched:
-                                            emit_status(f"🎵 Shazam found '{shazam_name}' but not in reference library", i, total)
+                                                emit_status(f"🎵 Shazam identified {f} → {shazam_name}", i, total)
+                                            else:
+                                                emit_status(f"🎵 Shazam found '{shazam_name}' but not in reference library", i, total)
                                             
                                             # Optionally save audio to reference library
                                             if save_new_audio and audio_dir:
                                                 try:
-                                                    import shutil
                                                     safe_name = "".join(c for c in shazam_name if c.isalnum() or c in (' ', '-', '_')).strip()
                                                     new_audio_path = os.path.join(audio_dir, f"{safe_name}.mp3")
                                                     
@@ -545,11 +614,12 @@ def match_videos():
                                                         new_audio_path = base_path.replace('.mp3', f' ({counter}).mp3')
                                                         counter += 1
                                                     
-                                                    # Copy the temp audio file
-                                                    shutil.copy2(temp_wav, new_audio_path)
+                                                    # Save as actual MP3 (not WAV bytes with .mp3 extension)
+                                                    cmd = ['ffmpeg', '-y', '-i', temp_wav, '-q:a', '2', '-map', 'a', new_audio_path]
+                                                    subprocess.run(cmd, capture_output=True, check=True)
                                                     
                                                     # Add to reference fingerprints immediately
-                                                    saved_fp = get_fingerprint_cached(new_audio_path, fpcalc, app.config['FINGERPRINT_CACHE'])
+                                                    saved_fp = get_fingerprint_cached(new_audio_path, fpcalc, app.config['FINGERPRINT_CACHE']) if fpcalc else None
                                                     if saved_fp is not None and len(saved_fp) > 0:
                                                         saved_name = os.path.basename(new_audio_path)
                                                         reference_fingerprints[saved_name] = np.unpackbits(saved_fp.view(np.uint8))
@@ -706,6 +776,7 @@ def rename_videos():
     # Start renaming in background thread
     def rename_task():
         global processing_status
+        rename_logger = RenameLogger(state_store.get_config().get('rename_log_file', 'rename_history.jsonl'))
 
         with processing_lock:
             processing_status['is_processing'] = True
@@ -768,6 +839,19 @@ def rename_videos():
                         success_count += 1
                         if match.get('id'):
                             success_ids.append(match['id'])
+                        rename_logger.log_rename(
+                            original_name=orig,
+                            new_name=new,
+                            video_dir=video_dir,
+                            match_method=match.get('match_type', 'web'),
+                            reference_name=match.get('matched_ref'),
+                            ber_score=match.get('ber'),
+                            shazam_name=(
+                                f"{match.get('shazam_artist', '')} - {match.get('shazam_title', '')}".strip(" -")
+                                if match.get('shazam_artist') or match.get('shazam_title') else None
+                            ),
+                            tags_added=state_store.get_config().get('fixed_tags')
+                        )
                         emit_status(f"✅ Renamed {orig} → {new}", i, total)
                     except Exception as e:
                         error_msg = f"Error renaming {orig}: {str(e)}"

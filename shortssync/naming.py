@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Set, Optional
 
 
-def sanitize_filename(name: str, max_length: int = 100) -> str:
+def sanitize_filename(name: str, max_length: Optional[int] = 100) -> str:
     """
     Sanitize a string for use as a filename.
     
@@ -28,7 +28,7 @@ def sanitize_filename(name: str, max_length: int = 100) -> str:
     name = name.strip(' .')
     
     # Limit length
-    if len(name) > max_length:
+    if max_length is not None and len(name) > max_length:
         name = name[:max_length].rsplit(' ', 1)[0]  # Try to break at word boundary
     
     return name
@@ -96,12 +96,15 @@ def generate_name(
     base = os.path.splitext(ref_name)[0]
     ext = os.path.splitext(vid_name)[1]
     
-    # Sanitize base name
-    base = sanitize_filename(base, max_length)
+    # Sanitize base name without truncating first.
+    # We reserve filename space based on suffix/tags per candidate so we don't
+    # chop song metadata prematurely.
+    base = sanitize_filename(base, max_length=None)
     
     if preserve_exact:
         # Try exact name first
-        candidate = f"{base}{ext}"
+        exact_base = truncate_intelligently(base, max_length)
+        candidate = f"{exact_base}{ext}"
         full_path = os.path.join(vid_dir, candidate)
         
         if not os.path.exists(full_path) and candidate.lower() not in used_names:
@@ -109,7 +112,9 @@ def generate_name(
         
         # Try with incrementing numbers
         for i in range(1, 100):
-            candidate = f"{base}_{i}{ext}"
+            suffix = f"_{i}"
+            truncated = truncate_intelligently(base, max(1, max_length - len(suffix)))
+            candidate = f"{truncated}{suffix}{ext}"
             full_path = os.path.join(vid_dir, candidate)
             if not os.path.exists(full_path) and candidate.lower() not in used_names:
                 return candidate
@@ -131,20 +136,20 @@ def generate_name(
         else:
             tag_str = ""
         
-        # Build full name
-        if fixed and tag_str:
-            full = f"{base} {fixed} {tag_str}"
-        elif fixed:
-            full = f"{base} {fixed}"
-        elif tag_str:
-            full = f"{base} {tag_str}"
+        # Build suffix first so we can reserve room for tags and keep base intact.
+        suffix_parts = []
+        if fixed:
+            suffix_parts.append(fixed)
+        if tag_str:
+            suffix_parts.append(tag_str)
+        suffix = " ".join(suffix_parts).strip()
+
+        if suffix:
+            available_base_len = max(1, max_length - len(suffix) - 1)
+            base_part = truncate_intelligently(base, available_base_len)
+            full = f"{base_part} {suffix}".strip()
         else:
-            full = base
-        
-        full = full.strip()
-        
-        # Truncate intelligently
-        full = truncate_intelligently(full, max_length)
+            full = truncate_intelligently(base, max_length)
         
         candidate = f"{full}{ext}"
         full_path = os.path.join(vid_dir, candidate)

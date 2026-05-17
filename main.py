@@ -31,7 +31,8 @@ from shortssync import (
     get_fpcalc_path,
     VideoAudioExtractor,
     ShazamClient,
-    is_shazam_available
+    is_shazam_available,
+    RenameLogger
 )
 
 # Import config
@@ -677,13 +678,34 @@ class ShortsSyncApp:
         if move and not os.path.exists(target_dir):
             os.makedirs(target_dir)
             
+        rename_log_file = config.get_defaults().get('rename_log_file', 'rename_history.jsonl') if config else 'rename_history.jsonl'
+        rename_logger = RenameLogger(rename_log_file)
+
         count = 0
         for orig, new, _ in valid:
             src = os.path.join(vid_dir, orig)
             dst = os.path.join(target_dir, new)
             try:
+                if not os.path.exists(src):
+                    continue
+                if os.path.lexists(dst):
+                    try:
+                        if os.path.samefile(src, dst):
+                            count += 1
+                            continue
+                    except OSError:
+                        pass
+                    print(f"Rename skipped (target exists): {new}")
+                    continue
                 os.rename(src, dst)
                 count += 1
+                rename_logger.log_rename(
+                    original_name=orig,
+                    new_name=new,
+                    video_dir=vid_dir,
+                    match_method='gui',
+                    tags_added=self.fixed_tags_entry.get().strip()
+                )
             except Exception as e:
                 print(f"Rename error: {e}")
         

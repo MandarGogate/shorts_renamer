@@ -7,8 +7,8 @@ If you want to change defaults, edit `DEFAULT_SETTINGS` directly.
 
 DEFAULT_SETTINGS = {
     # 'video_dir': '/Users/mandargogate/Work/CC/04Edited/',
-    'video_dir': '/Users/mandargogate/Work/CC/03Outputs/',
-    # 'video_dir': '/Users/mandargogate/Work/CC/05UploadQueue/',
+    # 'video_dir': '/Users/mandargogate/Work/CC/03Outputs/',
+    'video_dir': '/Users/mandargogate/Work/CC/05UploadQueue/',
     # 'video_dir': '/Users/mandargogate/Work/CC/05UploadQueue/',
     'audio_dir': '/Users/mandargogate/Work/CC/09trending',
     'fixed_tags': '#dance #viral #shorts',
