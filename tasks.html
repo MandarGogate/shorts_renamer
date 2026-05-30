@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ShortsSync — Project Dashboard</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --border:#30363d;
+    --text:#e6edf3; --muted:#8b949e; --accent:#58a6ff;
+    --green:#3fb950; --blue:#58a6ff; --yellow:#d29922; --red:#f85149; --purple:#bc8cff;
+    --green-bg:rgba(63,185,80,.15); --blue-bg:rgba(88,166,255,.15);
+    --yellow-bg:rgba(210,153,34,.15); --red-bg:rgba(248,81,73,.15); --purple-bg:rgba(188,140,255,.15);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg);color:var(--text);line-height:1.5;font-size:14px}
+  a{color:var(--accent);text-decoration:none}
+  header{padding:24px 32px;border-bottom:1px solid var(--border);
+    background:linear-gradient(135deg,#161b22,#0d1117)}
+  header h1{font-size:24px;font-weight:700}
+  header .sub{color:var(--muted);margin-top:4px;font-size:13px}
+  .wrap{max-width:1280px;margin:0 auto;padding:24px 32px}
+  .controls{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:24px;
+    position:sticky;top:0;background:var(--bg);padding:12px 0;z-index:50;border-bottom:1px solid var(--border)}
+  #search{flex:1;min-width:220px;padding:9px 12px;background:var(--panel);border:1px solid var(--border);
+    border-radius:8px;color:var(--text);font-size:14px}
+  #search:focus{outline:none;border-color:var(--accent)}
+  .filter-btn{padding:7px 13px;background:var(--panel);border:1px solid var(--border);border-radius:20px;
+    color:var(--muted);cursor:pointer;font-size:12px;font-weight:600;transition:.15s}
+  .filter-btn:hover{border-color:var(--accent);color:var(--text)}
+  .filter-btn.active{background:var(--blue-bg);border-color:var(--accent);color:var(--accent)}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin-bottom:28px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px}
+  .card .label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.5px}
+  .card .value{font-size:30px;font-weight:700;margin-top:6px}
+  .card .value.green{color:var(--green)} .card .value.blue{color:var(--blue)}
+  .card .value.yellow{color:var(--yellow)} .card .value.red{color:var(--red)}
+  .progress{height:8px;background:var(--panel2);border-radius:6px;overflow:hidden;margin-top:10px}
+  .progress > span{display:block;height:100%;background:linear-gradient(90deg,var(--green),var(--blue))}
+  .gauge{display:flex;align-items:center;gap:14px}
+  .ring{--p:78;width:64px;height:64px;border-radius:50%;flex-shrink:0;
+    background:conic-gradient(var(--green) calc(var(--p)*1%),var(--panel2) 0);
+    display:flex;align-items:center;justify-content:center}
+  .ring::before{content:attr(data-v);width:48px;height:48px;border-radius:50%;background:var(--panel);
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px}
+  section{margin-bottom:16px;background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+  .sec-head{padding:16px 20px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;
+    user-select:none;background:var(--panel)}
+  .sec-head:hover{background:var(--panel2)}
+  .sec-head h2{font-size:16px;font-weight:600;display:flex;align-items:center;gap:10px}
+  .sec-head .count{color:var(--muted);font-size:12px;font-weight:400}
+  .sec-head .chev{color:var(--muted);transition:.2s}
+  section.collapsed .sec-body{display:none}
+  section.collapsed .chev{transform:rotate(-90deg)}
+  .sec-body{padding:0 20px 20px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;cursor:pointer;
+    position:sticky;white-space:nowrap}
+  th:hover{color:var(--text)}
+  tr:hover td{background:var(--panel2)}
+  code{background:var(--panel2);padding:1px 6px;border-radius:5px;font-size:12px;color:var(--purple);
+    font-family:"SF Mono",Monaco,Consolas,monospace}
+  .badge{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap}
+  .b-green{background:var(--green-bg);color:var(--green)}
+  .b-blue{background:var(--blue-bg);color:var(--blue)}
+  .b-yellow{background:var(--yellow-bg);color:var(--yellow)}
+  .b-red{background:var(--red-bg);color:var(--red)}
+  .b-purple{background:var(--purple-bg);color:var(--purple)}
+  .b-gray{background:rgba(139,148,158,.15);color:var(--muted)}
+  .evidence{color:var(--muted);font-size:12px}
+  .roadmap{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;padding:20px}
+  .rm-col{background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:16px}
+  .rm-col h3{font-size:14px;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+  .rm-col ul{list-style:none} .rm-col li{padding:7px 0;border-bottom:1px solid var(--border);font-size:13px}
+  .rm-col li:last-child{border:0}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;margin:12px 0 0;font-size:12px;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+  footer{padding:24px 32px;color:var(--muted);font-size:12px;text-align:center;border-top:1px solid var(--border)}
+  .hidden{display:none !important}
+  .note{background:var(--blue-bg);border:1px solid var(--accent);border-radius:8px;padding:10px 14px;
+    margin-bottom:16px;font-size:13px;color:var(--text)}
+</style>
+</head>
+<body>
+<header>
+  <h1>🎵 ShortsSync — Project Dashboard</h1>
+  <div class="sub">Single source of truth for project status · Audio matching &amp; Shazam-powered renaming for short-form video</div>
+  <div class="sub" id="updated"></div>
+</header>
+
+<div class="wrap">
+
+  <!-- ============ EXECUTIVE SUMMARY ============ -->
+  <div class="cards">
+    <div class="card">
+      <div class="label">Health Score</div>
+      <div class="gauge"><div class="ring" data-v="78" style="--p:78"></div>
+        <div><div class="value green" style="font-size:20px">Good</div>
+        <div class="evidence">tests green · hardened</div></div></div>
+    </div>
+    <div class="card">
+      <div class="label">Roadmap Completion</div>
+      <div class="value blue">~70%</div>
+      <div class="progress"><span style="width:70%"></span></div>
+      <div class="evidence" style="margin-top:6px">Phases 1–3 of 4</div>
+    </div>
+    <div class="card"><div class="label">Completed Tasks</div><div class="value green">28</div>
+      <div class="evidence">from git + codebase</div></div>
+    <div class="card"><div class="label">Remaining Tasks</div><div class="value yellow">12</div>
+      <div class="evidence">tracked + planned</div></div>
+    <div class="card"><div class="label">Open Bugs</div><div class="value red">3</div>
+      <div class="evidence">0 critical · 2 med · 1 low</div></div>
+    <div class="card"><div class="label">Tests Passing</div><div class="value green">69</div>
+      <div class="evidence">+7 skipped · 0 failing</div></div>
+    <div class="card"><div class="label">Planned Features</div><div class="value yellow">7</div>
+      <div class="evidence">Phase 4 backlog</div></div>
+    <div class="card"><div class="label">Opportunities</div><div class="value blue">6</div>
+      <div class="evidence">untracked wins</div></div>
+  </div>
+
+  <div class="note">
+    <strong>Evidence basis:</strong> git log (20 commits), <code>PLAN.md</code>, live <code>pytest</code> run
+    (76 collected / 69 passed / 7 skipped), file inventory, and source inspection on 2026-05-30.
+    Items without direct code evidence are marked <span class="badge b-gray">Needs Verification</span>.
+  </div>
+
+  <!-- ============ CONTROLS ============ -->
+  <div class="controls">
+    <input id="search" placeholder="🔍 Search tasks, bugs, features, files…" oninput="doSearch()">
+    <button class="filter-btn active" data-f="all" onclick="setFilter(this)">All</button>
+    <button class="filter-btn" data-f="complete" onclick="setFilter(this)">✓ Complete</button>
+    <button class="filter-btn" data-f="partial" onclick="setFilter(this)">◑ Partial</button>
+    <button class="filter-btn" data-f="planned" onclick="setFilter(this)">○ Planned</button>
+    <button class="filter-btn" data-f="bug" onclick="setFilter(this)">⚠ Bug</button>
+  </div>
+  <div class="legend">
+    <span><i class="dot" style="background:var(--green)"></i>Complete</span>
+    <span><i class="dot" style="background:var(--blue)"></i>In Progress / Partial</span>
+    <span><i class="dot" style="background:var(--yellow)"></i>Planned</span>
+    <span><i class="dot" style="background:var(--red)"></i>Bug / Blocked</span>
+    <span><i class="dot" style="background:var(--muted)"></i>Needs Verification</span>
+  </div>
+  <div style="height:16px"></div>
+
+  <!-- ============ COMPLETED TASKS ============ -->
+  <section data-row="complete">
+    <div class="sec-head" onclick="toggle(this)"><h2>✅ Completed Tasks <span class="count">28 items · evidence-backed</span></h2><span class="chev">▾</span></div>
+    <div class="sec-body">
+      <table>
+        <thead><tr><th onclick="sortT(this,0)">Task</th><th onclick="sortT(this,1)">Description</th><th>Files</th><th onclick="sortT(this,3)">Category</th><th>Evidence</th><th onclick="sortT(this,5)">Conf.</th></tr></thead>
+        <tbody>
+          <tr data-status="complete"><td><strong>REF-1 · Shared matcher</strong></td><td>Extracted the 4× duplicated sliding-window matcher into one module.</td><td><code>shortssync/matcher.py</code></td><td><span class="badge b-purple">Refactor</span></td><td class="evidence">commit 45a5216</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>PERF-1 · Vectorized matcher</strong></td><td>NumPy stride windows + popcount LUT replace nested Python loops.</td><td><code>shortssync/matcher.py</code></td><td><span class="badge b-blue">Performance</span></td><td class="evidence">45a5216 · test_matcher.py</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>PERF-3 · Packed uint32 refs</strong></td><td>Store references as compact uint32, ~8× less RAM.</td><td><code>shortssync/matcher.py</code></td><td><span class="badge b-blue">Performance</span></td><td class="evidence">to_reference_fingerprint()</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>PERF-2 / TD-5 · Batch checkpoints</strong></td><td>Checkpoint every 10 files or 30s instead of every file.</td><td><code>cli.py</code></td><td><span class="badge b-blue">Performance</span></td><td class="evidence">commit 1fd57e3</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>BUG-006 / TD-4 · Atomic+locked caches</strong></td><td>RLock + tmp→replace writes on fingerprint/Shazam/index caches.</td><td><code>shortssync/fingerprint.py</code> <code>shortssync/shazam_client.py</code> <code>shortssync/index_cache.py</code></td><td><span class="badge b-red">Reliability</span></td><td class="evidence">commit 1fd57e3</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>REF-2 · One sanitize_filename</strong></td><td>Removed duplicate implementations; import canonical from naming.</td><td><code>cli.py</code> <code>rename_audio_files.py</code></td><td><span class="badge b-purple">Refactor</span></td><td class="evidence">commit 1fd57e3</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>REF-6 · commit_rename()</strong></td><td>Unified safe-rename with conflict detection + logging.</td><td><code>shortssync/rename_logger.py</code></td><td><span class="badge b-purple">Refactor</span></td><td class="evidence">1fd57e3 · RenameResult</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>REF-7 · Remove dead code</strong></td><td>Deleted demo_shazam.py; dropped unused upload config.</td><td><code>demo_shazam.py</code> (del) <code>web_backend.py</code></td><td><span class="badge b-purple">Refactor</span></td><td class="evidence">commit 178eb54</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>REF-4 · Shared constants</strong></td><td>AUDIO_EXTS/VIDEO_EXTS/MEDIA_EXTS + iter_media_files().</td><td><code>shortssync/constants.py</code></td><td><span class="badge b-purple">Refactor</span></td><td class="evidence">178eb54 · adopted in index_cache</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>TD-9 · Packaging config</strong></td><td>[project] deps, optional-deps, entry points; pytest+ruff config.</td><td><code>pyproject.toml</code></td><td><span class="badge b-yellow">DX</span></td><td class="evidence">commit 178eb54</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>TD-15 · Structured logging (core)</strong></td><td>get_logger()/setup_logging(); index_cache uses logger.</td><td><code>shortssync/log.py</code> <code>shortssync/fingerprint.py</code></td><td><span class="badge b-yellow">Observability</span></td><td class="evidence">178eb54 · partial rollout</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>BUG-007 · GUI thread-safety</strong></td><td>Snapshot widgets; route status via root.after(0,…).</td><td><code>main.py</code></td><td><span class="badge b-red">Reliability</span></td><td class="evidence">commit 178eb54</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>Cache maintenance CLI</strong></td><td>--cache-stats and --clear-cache commands.</td><td><code>cli.py</code></td><td><span class="badge b-blue">Feature</span></td><td class="evidence">178eb54 · verified output</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>BUG-001 · Web auth + localhost bind</strong></td><td>Token auth, 127.0.0.1 default, tightened CORS/Socket.IO.</td><td><code>web_backend.py</code> <code>shortssync/web_security.py</code></td><td><span class="badge b-red">Security</span></td><td class="evidence">3d18730 · test_web_security.py</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>BUG-002 · Path allow-list</strong></td><td>SHORTSSYNC_ROOTS boundary checks on all dir inputs.</td><td><code>web_backend.py</code> <code>shortssync/web_security.py</code></td><td><span class="badge b-red">Security</span></td><td class="evidence">3d18730 · 32 sec tests</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>BUG-003 · Download hardening</strong></td><td>URL scheme/host validation (SSRF), filename sanitization.</td><td><code>web_backend.py</code> <code>shortssync/web_security.py</code></td><td><span class="badge b-red">Security</span></td><td class="evidence">commit 3d18730</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>BUG-004 · extract_audio_safe</strong></td><td>Fixed double-yield contextmanager bug.</td><td><code>shortssync/utils.py</code></td><td><span class="badge b-red">Reliability</span></td><td class="evidence">3d18730 · test_utils_extract.py</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>BUG-009 · fpcalc error handling</strong></td><td>Specific exceptions + logging instead of swallowing.</td><td><code>shortssync/fingerprint.py</code></td><td><span class="badge b-red">Reliability</span></td><td class="evidence">test_fingerprint_errors.py (6)</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>TD-7 · De-hardcode config</strong></td><td>Env-var/local-override resolution; no personal paths.</td><td><code>config.py</code> <code>config.example.py</code></td><td><span class="badge b-yellow">DX</span></td><td class="evidence">os.environ resolution verified</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>TD-8 · Untrack personal data</strong></td><td>rename_history.jsonl removed from git + gitignored.</td><td><code>.gitignore</code></td><td><span class="badge b-red">Privacy</span></td><td class="evidence">git ls-files: not tracked</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>TD-10 · CI pipeline</strong></td><td>GitHub Actions: install ffmpeg/chromaprint, ruff, pytest.</td><td><code>.github/workflows/ci.yml</code></td><td><span class="badge b-yellow">DX</span></td><td class="evidence">file present + read</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>TEST-1 · Matcher tests</strong></td><td>8 tests incl. 200-iter random oracle equivalence.</td><td><code>test_matcher.py</code></td><td><span class="badge b-green">Testing</span></td><td class="evidence">8 passing</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>TEST-3 · Web security tests</strong></td><td>Auth, path-traversal, URL validation (32 tests).</td><td><code>test_web_security.py</code></td><td><span class="badge b-green">Testing</span></td><td class="evidence">32 passing</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>TEST-4 · extract_audio_safe tests</strong></td><td>Regression tests for BUG-004 (4 tests).</td><td><code>test_utils_extract.py</code></td><td><span class="badge b-green">Testing</span></td><td class="evidence">4 passing</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>Index checkpoint resume</strong></td><td>Resumable index build + format versioning.</td><td><code>shortssync/index_cache.py</code></td><td><span class="badge b-blue">Feature</span></td><td class="evidence">test_index_cache_resume.py (3)</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>Test infra · synthetic audio</strong></td><td>conftest make_tone fixture; offline test fixtures.</td><td><code>conftest.py</code></td><td><span class="badge b-green">Testing</span></td><td class="evidence">file read</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>Shazam integration</strong></td><td>Async shazamio wrapper + per-file JSON cache.</td><td><code>shortssync/shazam_client.py</code></td><td><span class="badge b-blue">Feature</span></td><td class="evidence">test_cli_shazam_mode.py (3)</td><td><span class="badge b-green">High</span></td></tr>
+          <tr data-status="complete"><td><strong>Persistent web match review</strong></td><td>Atomic, locked staged review store + validation.</td><td><code>shortssync/web_state.py</code></td><td><span class="badge b-blue">Feature</span></td><td class="evidence">test_web_state_and_review.py (15)</td><td><span class="badge b-green">High</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ REMAINING TASKS ============ -->
+  <section data-row="planned">
+    <div class="sec-head" onclick="toggle(this)"><h2>📋 Remaining Tasks <span class="count">12 items · planned / partial</span></h2><span class="chev">▾</span></div>
+    <div class="sec-body">
+      <table>
+        <thead><tr><th onclick="sortT(this,0)">Task</th><th onclick="sortT(this,1)">Priority</th><th>Effort</th><th>Dependencies</th><th>Files</th><th>Business Impact</th></tr></thead>
+        <tbody>
+          <tr data-status="planned"><td><strong>TEST-2 · Naming tests</strong></td><td><span class="badge b-red">P1</span></td><td>S</td><td>none</td><td><code>shortssync/naming.py</code> (no test_naming.py)</td><td>Guards tag/truncation/uniqueness logic against regressions.</td></tr>
+          <tr data-status="planned"><td><strong>TEST-5 · Cache concurrency tests</strong></td><td><span class="badge b-red">P1</span></td><td>M</td><td>BUG-006 (done)</td><td><code>shortssync/fingerprint.py</code> <code>shortssync/shazam_client.py</code></td><td>Proves the new locks prevent lost writes under threads.</td></tr>
+          <tr data-status="partial"><td><strong>TD-15 · Logging rollout (finish)</strong></td><td><span class="badge b-yellow">P2</span></td><td>M</td><td>log.py (done)</td><td><code>cli.py</code> <code>web_backend.py</code> <code>shazam_client.py</code></td><td>Consistent diagnostics; still many print() calls.</td></tr>
+          <tr data-status="partial"><td><strong>REF-4 · Constants rollout (finish)</strong></td><td><span class="badge b-yellow">P3</span></td><td>S</td><td>constants.py (done)</td><td><code>cli.py</code> <code>main.py</code> <code>web_backend.py</code> <code>find_unique.py</code></td><td>Single source for ext lists; reduces drift.</td></tr>
+          <tr data-status="planned"><td><strong>REF-3 · Decompose cli.main()</strong></td><td><span class="badge b-yellow">P2</span></td><td>L</td><td>REF-1 (done)</td><td><code>cli.py</code> (~700-line main)</td><td>Testability + maintainability of the largest function.</td></tr>
+          <tr data-status="planned"><td><strong>BUG-010 · sanitize empty/reserved</strong></td><td><span class="badge b-yellow">P2</span></td><td>S</td><td>none</td><td><code>shortssync/naming.py</code></td><td>Prevents empty/invalid Windows filenames on rename.</td></tr>
+          <tr data-status="planned"><td><strong>BUG-011 · Monitor inode reuse</strong></td><td><span class="badge b-yellow">P2</span></td><td>S</td><td>none</td><td><code>cli.py</code> (monitor_mode)</td><td>Avoids silently skipping new uploads in long sessions.</td></tr>
+          <tr data-status="planned"><td><strong>BUG-012 · Config/README drift</strong></td><td><span class="badge b-yellow">P3</span></td><td>S</td><td>none</td><td><code>config.py</code> <code>README.md</code></td><td>Docs match real defaults; fewer support surprises.</td></tr>
+          <tr data-status="planned"><td><strong>Rename undo</strong></td><td><span class="badge b-yellow">P2</span></td><td>M</td><td>complete logging</td><td><code>shortssync/rename_logger.py</code></td><td>Safety net; restore from audit log.</td></tr>
+          <tr data-status="planned"><td><strong>Naming templates + presets</strong></td><td><span class="badge b-yellow">P2</span></td><td>M</td><td>REF-1/REF-2 (done)</td><td><code>shortssync/naming.py</code></td><td>Matches real creator workflow (per-platform tags).</td></tr>
+          <tr data-status="planned"><td><strong>Web Shazam-only visibility</strong></td><td><span class="badge b-yellow">P3</span></td><td>S</td><td>none</td><td><code>web_backend.py</code> <code>web_frontend/</code></td><td>Web reaches CLI parity for hidden options.</td></tr>
+          <tr data-status="planned"><td><strong>Upload Queue pipeline + dashboard</strong></td><td><span class="badge b-yellow">P3</span></td><td>XL</td><td>REF-1, BUG-001 (done)</td><td><code>web_backend.py</code> <code>web_frontend/</code></td><td>Headline daily workflow.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ KNOWN BUGS ============ -->
+  <section data-row="bug">
+    <div class="sec-head" onclick="toggle(this)"><h2>🐞 Known Bugs <span class="count">3 open · 0 critical · 0 high · 2 medium · 1 low</span></h2><span class="chev">▾</span></div>
+    <div class="sec-body">
+      <p class="evidence" style="margin-bottom:10px">Critical &amp; High severity bugs (BUG-001…009) were resolved in Phases 1–2 — see Completed Tasks.</p>
+      <table>
+        <thead><tr><th onclick="sortT(this,0)">ID</th><th onclick="sortT(this,1)">Severity</th><th>Description</th><th>Root Cause</th><th>Files</th><th>Status</th><th>Recommended Fix</th></tr></thead>
+        <tbody>
+          <tr data-status="bug"><td><strong>BUG-010</strong></td><td><span class="badge b-yellow">Medium</span></td><td>sanitize_filename can return empty string or Windows reserved names (CON, NUL…).</td><td>No fallback for empty/reserved results after stripping.</td><td><code>shortssync/naming.py</code></td><td><span class="badge b-red">Open</span></td><td>Fallback to original stem / track_&lt;rand&gt;; guard reserved basenames.</td></tr>
+          <tr data-status="bug"><td><strong>BUG-011</strong></td><td><span class="badge b-yellow">Medium</span></td><td>Monitor mode keys processed files by inode; reused inodes skip new files.</td><td><code>st_ino</code> used as identity without reuse handling.</td><td><code>cli.py</code> (monitor_mode L522–542)</td><td><span class="badge b-red">Open</span></td><td>Track (inode, mtime, size); expire entries for missing files.</td></tr>
+          <tr data-status="bug"><td><strong>BUG-012</strong></td><td><span class="badge b-blue">Low</span></td><td>config.py defaults (shazam_only_mode, preserve_exact_titles, move_files) diverge from README.</td><td>Config evolved; docs not updated.</td><td><code>config.py</code> <code>README.md</code></td><td><span class="badge b-red">Open</span></td><td>Reconcile defaults; document every key.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ FEATURES INVENTORY ============ -->
+  <section data-row="complete">
+    <div class="sec-head" onclick="toggle(this)"><h2>🧩 Features Inventory <span class="count">grouped by module</span></h2><span class="chev">▾</span></div>
+    <div class="sec-body">
+      <table>
+        <thead><tr><th onclick="sortT(this,0)">Module</th><th onclick="sortT(this,1)">Feature</th><th>Description</th><th onclick="sortT(this,3)">Status</th><th>Files</th></tr></thead>
+        <tbody>
+          <tr data-status="complete"><td>matcher</td><td>Vectorized BER matcher</td><td>Sliding-window Hamming match over uint32 fingerprints.</td><td><span class="badge b-green">Complete</span></td><td><code>shortssync/matcher.py</code></td></tr>
+          <tr data-status="complete"><td>fingerprint</td><td>Chromaprint fingerprinting + cache</td><td>fpcalc -raw, thread-safe atomic .npy cache.</td><td><span class="badge b-green">Complete</span></td><td><code>shortssync/fingerprint.py</code></td></tr>
+          <tr data-status="complete"><td>fingerprint</td><td>Slowed-audio variants</td><td>ffmpeg atempo slowed reference generation.</td><td><span class="badge b-green">Complete</span></td><td><code>shortssync/fingerprint.py</code> <code>create_slowed_versions.py</code></td></tr>
+          <tr data-status="complete"><td>naming</td><td>Filename generation + tags</td><td>generate_name, build_reference_label, sanitize.</td><td><span class="badge b-green">Complete</span></td><td><code>shortssync/naming.py</code></td></tr>
+          <tr data-status="complete"><td>shazam</td><td>Song identification</td><td>Async shazamio + per-file JSON cache (locked/atomic).</td><td><span class="badge b-green">Complete</span></td><td><code>shortssync/shazam_client.py</code></td></tr>
+          <tr data-status="complete"><td>index_cache</td><td>Reference index + resume</td><td>NPZ+JSON cache, versioned, resumable checkpoint.</td><td><span class="badge b-green">Complete</span></td><td><code>shortssync/index_cache.py</code></td></tr>
+          <tr data-status="complete"><td>rename</td><td>Safe commit + audit log</td><td>commit_rename + JSONL rename history.</td><td><span class="badge b-green">Complete</span></td><td><code>shortssync/rename_logger.py</code></td></tr>
+          <tr data-status="complete"><td>cli</td><td>Batch CLI</td><td>Fingerprint-first match, Shazam modes, threshold, stats.</td><td><span class="badge b-green">Complete</span></td><td><code>cli.py</code></td></tr>
+          <tr data-status="complete"><td>cli</td><td>Monitor mode</td><td>Watch dir &amp; auto-process new files.</td><td><span class="badge b-blue">Partial</span></td><td><code>cli.py</code> (BUG-011)</td></tr>
+          <tr data-status="complete"><td>gui</td><td>Tkinter desktop app</td><td>Browse, scan, preview, commit; thread-safe.</td><td><span class="badge b-green">Complete</span></td><td><code>main.py</code></td></tr>
+          <tr data-status="complete"><td>web</td><td>Flask + Socket.IO server</td><td>Hardened (auth, allow-list, SSRF guard), real-time UI.</td><td><span class="badge b-green">Complete</span></td><td><code>web_backend.py</code> <code>shortssync/web_security.py</code></td></tr>
+          <tr data-status="complete"><td>web</td><td>Persistent match review</td><td>Stage→approve→commit flow with atomic store.</td><td><span class="badge b-green">Complete</span></td><td><code>shortssync/web_state.py</code></td></tr>
+          <tr data-status="complete"><td>tools</td><td>Duplicate finder</td><td>Fingerprint-based dedup; optional MP3 convert.</td><td><span class="badge b-blue">Partial</span></td><td><code>find_unique.py</code></td></tr>
+          <tr data-status="complete"><td>tools</td><td>MP3 downloader</td><td>yt-dlp download to reference folder.</td><td><span class="badge b-green">Complete</span></td><td><code>download_mp3.py</code></td></tr>
+          <tr data-status="complete"><td>tools</td><td>Audio library renamer</td><td>Rename references from Shazam metadata.</td><td><span class="badge b-green">Complete</span></td><td><code>rename_audio_files.py</code></td></tr>
+          <tr data-status="planned"><td>web</td><td>Upload-queue dashboard</td><td>One-click scan→stage→approve→move pipeline.</td><td><span class="badge b-yellow">Planned</span></td><td><code>web_backend.py</code></td></tr>
+          <tr data-status="planned"><td>rename</td><td>Rename undo</td><td>Restore files from audit log.</td><td><span class="badge b-yellow">Planned</span></td><td><code>shortssync/rename_logger.py</code></td></tr>
+          <tr data-status="planned"><td>naming</td><td>Templates + platform presets</td><td>{artist} - {title} templates; TikTok/Reels presets.</td><td><span class="badge b-yellow">Planned</span></td><td><code>shortssync/naming.py</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ UNPLANNED OPPORTUNITIES ============ -->
+  <section data-row="planned">
+    <div class="sec-head" onclick="toggle(this)"><h2>💡 Unplanned Opportunities <span class="count">6 untracked wins</span></h2><span class="chev">▾</span></div>
+    <div class="sec-body">
+      <table>
+        <thead><tr><th onclick="sortT(this,0)">Opportunity</th><th>Type</th><th onclick="sortT(this,2)">Impact</th><th>Effort</th><th onclick="sortT(this,4)">ROI</th><th>Notes / Files</th></tr></thead>
+        <tbody>
+          <tr data-status="planned"><td>Enforce ruff in CI (not exit-zero)</td><td><span class="badge b-yellow">DX</span></td><td>Medium</td><td>S</td><td><span class="badge b-green">High</span></td><td>CI runs <code>ruff --exit-zero</code>; gate on real failures.</td></tr>
+          <tr data-status="planned"><td>PERF-4 · Parallel Shazam/fingerprint</td><td><span class="badge b-blue">Performance</span></td><td>High</td><td>M</td><td><span class="badge b-green">High</span></td><td>Serial asyncio.run per file; batch with bounded concurrency.</td></tr>
+          <tr data-status="planned"><td>Coverage reporting in CI</td><td><span class="badge b-green">Testing</span></td><td>Medium</td><td>S</td><td><span class="badge b-green">High</span></td><td>Add pytest-cov + threshold gate.</td></tr>
+          <tr data-status="planned"><td>Rate limiting on web endpoints</td><td><span class="badge b-red">Security</span></td><td>Medium</td><td>S</td><td><span class="badge b-blue">Medium</span></td><td>flask-limiter on index/match/download*.</td></tr>
+          <tr data-status="planned"><td>Pre-commit hooks (ruff+format)</td><td><span class="badge b-yellow">DX</span></td><td>Low</td><td>S</td><td><span class="badge b-blue">Medium</span></td><td>Catch lint before push.</td></tr>
+          <tr data-status="planned"><td>/api/metrics + richer health</td><td><span class="badge b-yellow">Observability</span></td><td>Medium</td><td>M</td><td><span class="badge b-blue">Medium</span></td><td>Index/match latency, cache hit-rate (data already computable).</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ TECHNICAL DEBT ============ -->
+  <section data-row="planned">
+    <div class="sec-head" onclick="toggle(this)"><h2>🧱 Technical Debt Register <span class="count">open items</span></h2><span class="chev">▾</span></div>
+    <div class="sec-body">
+      <table>
+        <thead><tr><th onclick="sortT(this,0)">ID</th><th>Description</th><th onclick="sortT(this,2)">Impact</th><th onclick="sortT(this,3)">Priority</th><th>Effort</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr data-status="planned"><td>TD-3</td><td>cli.main() ~700 lines, mixed concerns.</td><td>Hard to test/modify</td><td><span class="badge b-yellow">P2</span></td><td>L</td><td><span class="badge b-yellow">Open</span></td></tr>
+          <tr data-status="partial"><td>TD-15</td><td>print()/emoji output still dominant outside core modules.</td><td>Hard to operate</td><td><span class="badge b-yellow">P2</span></td><td>M</td><td><span class="badge b-blue">Partial</span></td></tr>
+          <tr data-status="planned"><td>TD-13</td><td>Global mutable state in web backend (single job/user).</td><td>Not concurrent-safe</td><td><span class="badge b-yellow">P2</span></td><td>L</td><td><span class="badge b-yellow">Open</span></td></tr>
+          <tr data-status="planned"><td>TD-14</td><td>Broad <code>except Exception</code> still in cli/web paths.</td><td>Hard to debug</td><td><span class="badge b-yellow">P2</span></td><td>M</td><td><span class="badge b-blue">Partial</span></td></tr>
+          <tr data-status="planned"><td>TD-2</td><td>find_unique inline ext lists not yet on shared constants.</td><td>Drift risk</td><td><span class="badge b-blue">P3</span></td><td>S</td><td><span class="badge b-blue">Partial</span></td></tr>
+          <tr data-status="planned"><td>TD-12</td><td>README ↔ config ↔ GUI default drift (see BUG-012).</td><td>Misleading docs</td><td><span class="badge b-blue">P3</span></td><td>S</td><td><span class="badge b-yellow">Open</span></td></tr>
+          <tr data-status="planned"><td>test_slowed_audio.py</td><td>Manual script in test namespace (2 skipped).</td><td>Confusing collection</td><td><span class="badge b-blue">P3</span></td><td>S</td><td><span class="badge b-gray">Needs Verification</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ SECURITY ============ -->
+  <section data-row="complete">
+    <div class="sec-head" onclick="toggle(this)"><h2>🔐 Security Findings <span class="count">mitigations &amp; residual risk</span></h2><span class="chev">▾</span></div>
+    <div class="sec-body">
+      <table>
+        <thead><tr><th>Item</th><th>Type</th><th>Status</th><th>Files</th></tr></thead>
+        <tbody>
+          <tr data-status="complete"><td>Token auth + localhost-default bind</td><td><span class="badge b-green">Mitigation</span></td><td><span class="badge b-green">Implemented</span></td><td><code>shortssync/web_security.py</code></td></tr>
+          <tr data-status="complete"><td>Path allow-list (SHORTSSYNC_ROOTS)</td><td><span class="badge b-green">Mitigation</span></td><td><span class="badge b-green">Implemented</span></td><td><code>shortssync/web_security.py</code></td></tr>
+          <tr data-status="complete"><td>SSRF guard + filename sanitization on downloads</td><td><span class="badge b-green">Mitigation</span></td><td><span class="badge b-green">Implemented</span></td><td><code>web_backend.py</code></td></tr>
+          <tr data-status="complete"><td>Configurable SECRET_KEY (env override)</td><td><span class="badge b-green">Mitigation</span></td><td><span class="badge b-green">Implemented</span></td><td><code>web_backend.py</code></td></tr>
+          <tr data-status="planned"><td>Production WSGI/ASGI server guidance</td><td><span class="badge b-yellow">Risk</span></td><td><span class="badge b-yellow">Outstanding</span></td><td><code>web_backend.py</code> (dev server default)</td></tr>
+          <tr data-status="planned"><td>Rate limiting on endpoints</td><td><span class="badge b-yellow">Risk</span></td><td><span class="badge b-yellow">Outstanding</span></td><td><code>web_backend.py</code></td></tr>
+          <tr data-status="planned"><td>Absolute paths in some API error messages</td><td><span class="badge b-blue">Risk</span></td><td><span class="badge b-yellow">Outstanding</span></td><td><code>web_backend.py</code></td></tr>
+          <tr data-status="planned"><td>Dependency pinning / pip-audit in CI</td><td><span class="badge b-blue">TODO</span></td><td><span class="badge b-yellow">Outstanding</span></td><td><code>requirements.txt</code> <code>pyproject.toml</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ TESTING COVERAGE ============ -->
+  <section data-row="complete">
+    <div class="sec-head" onclick="toggle(this)"><h2>🧪 Testing Coverage <span class="count">76 collected · 69 pass · 7 skip · 0 fail</span></h2><span class="chev">▾</span></div>
+    <div class="sec-body">
+      <table>
+        <thead><tr><th onclick="sortT(this,0)">Area</th><th>Type</th><th onclick="sortT(this,2)">Tests</th><th>Status</th><th>File</th></tr></thead>
+        <tbody>
+          <tr data-status="complete"><td>Matcher algorithm</td><td>Unit</td><td>8</td><td><span class="badge b-green">Covered</span></td><td><code>test_matcher.py</code></td></tr>
+          <tr data-status="complete"><td>Web security helpers</td><td>Unit</td><td>32</td><td><span class="badge b-green">Covered</span></td><td><code>test_web_security.py</code></td></tr>
+          <tr data-status="complete"><td>Web state / review</td><td>Integration</td><td>15</td><td><span class="badge b-green">Covered</span></td><td><code>test_web_state_and_review.py</code></td></tr>
+          <tr data-status="complete"><td>Fingerprint errors</td><td>Unit</td><td>6</td><td><span class="badge b-green">Covered</span></td><td><code>test_fingerprint_errors.py</code></td></tr>
+          <tr data-status="complete"><td>extract_audio_safe (BUG-004)</td><td>Unit</td><td>4</td><td><span class="badge b-green">Covered</span></td><td><code>test_utils_extract.py</code></td></tr>
+          <tr data-status="complete"><td>Index cache resume</td><td>Unit</td><td>3</td><td><span class="badge b-green">Covered</span></td><td><code>test_index_cache_resume.py</code></td></tr>
+          <tr data-status="complete"><td>CLI Shazam mode</td><td>Unit</td><td>3</td><td><span class="badge b-green">Covered</span></td><td><code>test_cli_shazam_mode.py</code></td></tr>
+          <tr data-status="complete"><td>Fingerprint cache reuse</td><td>Unit</td><td>1</td><td><span class="badge b-green">Covered</span></td><td><code>test_fingerprint_cache.py</code></td></tr>
+          <tr data-status="complete"><td>Fingerprint integration</td><td>Integration</td><td>2</td><td><span class="badge b-blue">Skips w/o ffmpeg</span></td><td><code>test_fingerprint_integration.py</code></td></tr>
+          <tr data-status="planned"><td>naming.generate_name / sanitize</td><td>Unit</td><td>0</td><td><span class="badge b-red">Gap (TEST-2)</span></td><td>—</td></tr>
+          <tr data-status="planned"><td>Cache concurrency / atomicity</td><td>Unit</td><td>0</td><td><span class="badge b-red">Gap (TEST-5)</span></td><td>—</td></tr>
+          <tr data-status="planned"><td>End-to-end rename workflow</td><td>E2E</td><td>0</td><td><span class="badge b-red">Gap</span></td><td>—</td></tr>
+        </tbody>
+      </table>
+      <p class="evidence" style="margin-top:10px">No line-coverage tool configured (no pytest-cov). Coverage above is by component, not %.</p>
+    </div>
+  </section>
+
+  <!-- ============ ROADMAP ============ -->
+  <section data-row="all">
+    <div class="sec-head" onclick="toggle(this)"><h2>🗺️ Roadmap</h2><span class="chev">▾</span></div>
+    <div class="roadmap">
+      <div class="rm-col">
+        <h3><span class="dot" style="background:var(--red)"></span>Next 7 Days</h3>
+        <ul>
+          <li><strong>TEST-2</strong> — naming unit tests <span class="badge b-red">P1</span></li>
+          <li><strong>TEST-5</strong> — cache concurrency tests <span class="badge b-red">P1</span></li>
+          <li><strong>BUG-010</strong> — sanitize empty/reserved fallback <span class="badge b-yellow">P2</span></li>
+          <li><strong>BUG-011</strong> — monitor inode identity fix <span class="badge b-yellow">P2</span></li>
+          <li>Enforce ruff in CI (drop --exit-zero)</li>
+        </ul>
+      </div>
+      <div class="rm-col">
+        <h3><span class="dot" style="background:var(--blue)"></span>Next 30 Days</h3>
+        <ul>
+          <li><strong>REF-3</strong> — decompose cli.main()</li>
+          <li><strong>TD-15</strong> — finish logging rollout</li>
+          <li><strong>REF-4</strong> — adopt constants everywhere</li>
+          <li><strong>BUG-012</strong> — reconcile config/README</li>
+          <li>PERF-4 — parallel Shazam/fingerprinting</li>
+          <li>Naming templates + platform presets</li>
+          <li>Web Shazam-only option visibility</li>
+        </ul>
+      </div>
+      <div class="rm-col">
+        <h3><span class="dot" style="background:var(--yellow)"></span>Future Backlog</h3>
+        <ul>
+          <li>One-click Upload-Queue pipeline + dashboard</li>
+          <li>Multi-job web backend (task queue) — TD-13</li>
+          <li>Rename undo from audit log</li>
+          <li>Confidence bands + keyboard review</li>
+          <li>Duplicate-song grouping / repeat warnings</li>
+          <li>Pluggable / native matching backend</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  ShortsSync project dashboard · Generated from repository evidence (git history, PLAN.md, live pytest, source inspection).
+  Statuses without code evidence are flagged <em>Needs Verification</em>. · Repo: <code>MandarGogate/shorts_renamer</code>
+</footer>
+
+<script>
+  document.getElementById('updated').textContent =
+    'Last updated: ' + new Date().toLocaleString();
+
+  function toggle(h){ h.parentElement.classList.toggle('collapsed'); }
+
+  function setFilter(btn){
+    document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    const f = btn.dataset.f;
+    document.querySelectorAll('tbody tr').forEach(tr=>{
+      const st = tr.dataset.status || '';
+      tr.classList.toggle('hidden', !(f==='all' || st===f));
+    });
+    // hide empty sections
+    document.querySelectorAll('section').forEach(sec=>{
+      const rows = sec.querySelectorAll('tbody tr');
+      if(rows.length===0) return;
+      const visible = [...rows].some(r=>!r.classList.contains('hidden'));
+      sec.classList.toggle('hidden', !visible);
+    });
+    doSearch();
+  }
+
+  function doSearch(){
+    const q = document.getElementById('search').value.toLowerCase();
+    document.querySelectorAll('tbody tr').forEach(tr=>{
+      if(tr.classList.contains('hidden') && q==='') return;
+      const hit = tr.textContent.toLowerCase().includes(q);
+      if(q!=='') tr.classList.toggle('hidden', !hit);
+    });
+  }
+
+  function sortT(th, col){
+    const table = th.closest('table');
+    const tbody = table.querySelector('tbody');
+    const rows = [...tbody.querySelectorAll('tr')];
+    const asc = !(th.dataset.asc === 'true');
+    th.dataset.asc = asc;
+    rows.sort((a,b)=>{
+      const x=a.children[col].textContent.trim().toLowerCase();
+      const y=b.children[col].textContent.trim().toLowerCase();
+      return asc ? x.localeCompare(y) : y.localeCompare(x);
+    });
+    rows.forEach(r=>tbody.appendChild(r));
+  }
+</script>
+</body>
+</html>
