@@ -12,7 +12,12 @@ import numpy as np
 
 class ReferenceIndexCache:
     """Cache for reference audio index to avoid re-indexing unchanged files."""
-    
+
+    # Bumped to 2 when the stored fingerprint representation changed from
+    # unpacked uint8 bit arrays to raw uint32 words (PERF-3). Older caches are
+    # incompatible with the current matcher and must be rebuilt.
+    CACHE_FORMAT_VERSION = 2
+
     def __init__(self, cache_dir: str = ".fingerprints"):
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(exist_ok=True)
@@ -110,7 +115,11 @@ class ReferenceIndexCache:
         try:
             with open(self.index_file, 'r') as f:
                 cache_info = json.load(f)
-            
+
+            # Reject caches written in an older, incompatible format (PERF-3).
+            if cache_info.get('format_version') != self.CACHE_FORMAT_VERSION:
+                return False
+
             # Check if audio directory changed
             cached_dir = cache_info.get('audio_dir', '')
             if cached_dir != audio_dir:
@@ -181,6 +190,7 @@ class ReferenceIndexCache:
             
             # Save metadata
             cache_info = {
+                'format_version': self.CACHE_FORMAT_VERSION,
                 'audio_dir': audio_dir,
                 'signature': signature,
                 'config': self._get_cache_config(config),
@@ -228,11 +238,12 @@ class ReferenceIndexCache:
             return None
 
         ref_fps, shazam_names, checkpoint_info = loaded
+        same_version = checkpoint_info.get('format_version') == self.CACHE_FORMAT_VERSION
         same_dir = checkpoint_info.get('audio_dir') == audio_dir
         same_config = checkpoint_info.get('config') == self._get_cache_config(config)
         same_files = checkpoint_info.get('all_files') == all_files
 
-        if not (same_dir and same_config and same_files):
+        if not (same_version and same_dir and same_config and same_files):
             self.clear_checkpoint()
             return None
 
@@ -254,6 +265,7 @@ class ReferenceIndexCache:
             np.savez_compressed(self.checkpoint_data_file, **npz_data)
 
             checkpoint_info = {
+                'format_version': self.CACHE_FORMAT_VERSION,
                 'audio_dir': audio_dir,
                 'config': self._get_cache_config(config),
                 'names': sanitized_names,

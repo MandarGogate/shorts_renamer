@@ -11,6 +11,10 @@ from .shazam_client import ShazamClient, ShazamCache, is_shazam_available, ident
 from .utils import extract_audio_safe, get_fpcalc_path, VideoAudioExtractor
 from .rename_logger import RenameLogger, log_rename
 from .index_cache import ReferenceIndexCache
+from .matcher import (
+    fingerprint_ber, find_best_match,
+    to_reference_fingerprint, iter_reference_fingerprints,
+)
 
 __all__ = [
     'get_fingerprint',
@@ -33,6 +37,10 @@ __all__ = [
     'RenameLogger',
     'log_rename',
     'ReferenceIndexCache',
+    'fingerprint_ber',
+    'find_best_match',
+    'to_reference_fingerprint',
+    'iter_reference_fingerprints',
 ]
 
 __version__ = '1.0.0'

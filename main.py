@@ -6,9 +6,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 # Third-party dependencies
-try:
-    import numpy as np
-except ImportError:
+if find_spec("numpy") is None:
     messagebox.showerror("Missing Dependency", "Numpy is required.\npip install numpy")
     sys.exit(1)
 
@@ -32,7 +30,9 @@ from shortssync import (
     VideoAudioExtractor,
     ShazamClient,
     is_shazam_available,
-    RenameLogger
+    RenameLogger,
+    find_best_match,
+    to_reference_fingerprint
 )
 
 # Import config
@@ -544,7 +544,7 @@ class ShortsSyncApp:
                             used_ref_labels
                         )
                         used_ref_labels.add(display_name.lower())
-                        ref_fps[display_name] = np.unpackbits(fp.view(np.uint8))
+                        ref_fps[display_name] = to_reference_fingerprint(fp)
                         
                 except Exception as e:
                     print(f"Error processing {rel_path}: {e}")
@@ -572,6 +572,13 @@ class ShortsSyncApp:
         results = []
         proposed_names = set()
 
+        # BUG-008: use the configured threshold (default 0.15) instead of a
+        # hardcoded literal, so the GUI no longer drifts from the CLI default.
+        try:
+            threshold = float(config.get_defaults().get('threshold', 0.15)) if (CONFIG_AVAILABLE and config) else 0.15
+        except Exception:
+            threshold = 0.15
+
         for i, f in enumerate(vid_files):
             self.status_var.set(f"Matching ({i+1}/{len(vid_files)}): {f}")
             full_path = os.path.join(video_path, f)
@@ -589,41 +596,10 @@ class ShortsSyncApp:
                     if q_fp is None or len(q_fp) == 0:
                         results.append((f, "---", "FP Error"))
                         continue
-                    
-                    q_bits = np.unpackbits(q_fp.view(np.uint8))
-                    n_q = len(q_bits)
-                    
-                    best_ber = 1.0
-                    best_ref = None
-                    
-                    for ref_name, r_bits in ref_fps.items():
-                        n_r = len(r_bits)
-                        if n_q > n_r:
-                            continue
-                        
-                        n_windows = (n_r // 32) - (len(q_fp)) + 1
-                        if n_windows < 1:
-                            continue
-                        
-                        min_dist = float('inf')
-                        for w in range(n_windows):
-                            start = w * 32
-                            end = start + n_q
-                            sub_r = r_bits[start:end]
-                            dist = np.count_nonzero(np.bitwise_xor(q_bits, sub_r))
-                            if dist < min_dist:
-                                min_dist = dist
-                                if min_dist == 0:
-                                    break
-                        
-                        ber = min_dist / n_q if n_q > 0 else 1.0
-                        if ber < best_ber:
-                            best_ber = ber
-                            best_ref = ref_name
-                            if best_ber == 0:
-                                break
-                    
-                    if best_ref and best_ber < 0.15:
+
+                    best_ref, best_ber = find_best_match(q_fp, ref_fps, threshold)
+
+                    if best_ref:
                         new_name = generate_name(
                             ref_name=best_ref,
                             vid_name=f,

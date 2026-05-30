@@ -12,7 +12,6 @@ import subprocess
 from datetime import datetime
 import secrets
 
-import numpy as np
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
@@ -31,6 +30,8 @@ from shortssync import (
     is_shazam_available,
     ShazamCache,
     RenameLogger,
+    find_best_match,
+    to_reference_fingerprint,
 )
 from shortssync.web_state import WebStateStore, validate_review_filename
 from shortssync.web_security import (
@@ -375,7 +376,7 @@ def index_reference_audio():
                             used_ref_labels
                         )
                         used_ref_labels.add(display_name.lower())
-                        ref_fps[display_name] = np.unpackbits(fp.view(np.uint8))
+                        ref_fps[display_name] = to_reference_fingerprint(fp)
 
                 reference_fingerprints = ref_fps
                 emit_status(f"✅ Indexed {len(ref_fps)} reference tracks", total, total)
@@ -524,41 +525,13 @@ def match_videos():
                                     emit_status(f"Fingerprint error for {f}", i, total)
                                     continue
 
-                                q_bits = np.unpackbits(q_fp.view(np.uint8))
-                                n_q = len(q_bits)
-
-                                # Find best match using sliding window
-                                best_ref = None
-
-                                for ref_name, r_bits in reference_fingerprints.items():
-                                    n_r = len(r_bits)
-                                    if n_q > n_r:
-                                        continue
-
-                                    n_windows = (n_r // 32) - len(q_fp) + 1
-                                    if n_windows < 1:
-                                        continue
-
-                                    min_dist = float('inf')
-                                    for w in range(n_windows):
-                                        start = w * 32
-                                        end = start + n_q
-                                        sub_r = r_bits[start:end]
-                                        dist = np.count_nonzero(np.bitwise_xor(q_bits, sub_r))
-                                        if dist < min_dist:
-                                            min_dist = dist
-                                            if min_dist == 0:
-                                                break
-
-                                    ber = min_dist / n_q if n_q > 0 else 1.0
-                                    if ber < best_ber:
-                                        best_ber = ber
-                                        best_ref = ref_name
-                                        if best_ber == 0:
-                                            break
+                                # Find best match using the shared vectorized matcher.
+                                best_ref, best_ber = find_best_match(
+                                    q_fp, reference_fingerprints, threshold
+                                )
 
                                 # Check if match is good enough
-                                if best_ref and best_ber < threshold:
+                                if best_ref:
                                     new_name = generate_name(
                                         ref_name=best_ref,
                                         vid_name=f,
@@ -673,7 +646,7 @@ def match_videos():
                                                     saved_fp = get_fingerprint_cached(new_audio_path, fpcalc, app.config['FINGERPRINT_CACHE']) if fpcalc else None
                                                     if saved_fp is not None and len(saved_fp) > 0:
                                                         saved_name = os.path.basename(new_audio_path)
-                                                        reference_fingerprints[saved_name] = np.unpackbits(saved_fp.view(np.uint8))
+                                                        reference_fingerprints[saved_name] = to_reference_fingerprint(saved_fp)
                                                         emit_status(f"💾 Saved to reference library: {os.path.basename(new_audio_path)}", i, total)
                                                 except Exception as e:
                                                     emit_status(f"⚠️  Could not save audio: {e}", i, total)

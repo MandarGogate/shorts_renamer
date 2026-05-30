@@ -6,7 +6,6 @@ ShortsSync CLI - Command-line version that runs with default settings from confi
 import os
 import sys
 import subprocess
-import numpy as np
 import argparse
 import asyncio
 import re
@@ -25,7 +24,9 @@ from shortssync import (
     ShazamClient,
     is_shazam_available,
     RenameLogger,
-    ReferenceIndexCache
+    ReferenceIndexCache,
+    find_best_match,
+    to_reference_fingerprint,
 )
 
 # Import config with better error handling
@@ -274,39 +275,9 @@ def process_single_video(
                 if q_fp is None or len(q_fp) == 0:
                     return False, None, {'error': 'Fingerprint error'}
 
-                q_bits = np.unpackbits(q_fp.view(np.uint8))
-                n_q = len(q_bits)
+                best_ref, best_ber = find_best_match(q_fp, ref_fps, threshold)
 
-                best_ref = None
-
-                for ref_name, r_bits in ref_fps.items():
-                    n_r = len(r_bits)
-                    if n_q > n_r:
-                        continue
-
-                    n_windows = (n_r // 32) - len(q_fp) + 1
-                    if n_windows < 1:
-                        continue
-
-                    min_dist = float('inf')
-                    for w in range(n_windows):
-                        start = w * 32
-                        end = start + n_q
-                        sub_r = r_bits[start:end]
-                        dist = np.count_nonzero(np.bitwise_xor(q_bits, sub_r))
-                        if dist < min_dist:
-                            min_dist = dist
-                            if min_dist == 0:
-                                break
-
-                    ber = min_dist / n_q if n_q > 0 else 1.0
-                    if ber < best_ber:
-                        best_ber = ber
-                        best_ref = ref_name
-                        if best_ber == 0:
-                            break
-
-                if best_ref and best_ber < threshold:
+                if best_ref:
                     is_slowed = '[SLOWED' in best_ref
                     slowed_speed = None
                     if is_slowed:
@@ -521,7 +492,7 @@ def monitor_mode(args, defaults):
                         used_ref_labels
                     )
                     used_ref_labels.add(display_name.lower())
-                    ref_fps[display_name] = np.unpackbits(fp.view(np.uint8))
+                    ref_fps[display_name] = to_reference_fingerprint(fp)
 
                     if detect_slowed and rel_path.lower().endswith(audio_exts):
                         try:
@@ -529,7 +500,7 @@ def monitor_mode(args, defaults):
                             for speed, slowed_fp in slowed_fps.items():
                                 if slowed_fp is not None and len(slowed_fp) > 0:
                                     slowed_name = f"{display_name} [SLOWED {speed}x]"
-                                    ref_fps[slowed_name] = np.unpackbits(slowed_fp.view(np.uint8))
+                                    ref_fps[slowed_name] = to_reference_fingerprint(slowed_fp)
                         except Exception as e:
                             print(f"    ⚠️  Slowed fingerprint error: {e}")
 
@@ -1048,7 +1019,7 @@ Monitor Mode (auto-process new files):
                                 used_ref_labels
                             )
                             used_ref_labels.add(display_name.lower())
-                            ref_fps[display_name] = np.unpackbits(fp.view(np.uint8))
+                            ref_fps[display_name] = to_reference_fingerprint(fp)
 
                             if detect_slowed and rel_path.lower().endswith(audio_exts):
                                 try:
@@ -1058,7 +1029,7 @@ Monitor Mode (auto-process new files):
                                             continue
 
                                         slowed_name = f"{display_name} [SLOWED {speed}x]"
-                                        ref_fps[slowed_name] = np.unpackbits(slowed_fp.view(np.uint8))
+                                        ref_fps[slowed_name] = to_reference_fingerprint(slowed_fp)
                                 except Exception as e:
                                     print(f"    ⚠️  Slowed fingerprint error: {e}")
 
@@ -1165,39 +1136,9 @@ Monitor Mode (auto-process new files):
                         print("  ⚠️  Fingerprint error")
                         continue
 
-                    q_bits = np.unpackbits(q_fp.view(np.uint8))
-                    n_q = len(q_bits)
+                    best_ref, best_ber = find_best_match(q_fp, ref_fps, threshold)
 
-                    best_ref = None
-
-                    for ref_name, r_bits in ref_fps.items():
-                        n_r = len(r_bits)
-                        if n_q > n_r:
-                            continue
-
-                        n_windows = (n_r // 32) - len(q_fp) + 1
-                        if n_windows < 1:
-                            continue
-
-                        min_dist = float('inf')
-                        for w in range(n_windows):
-                            start = w * 32
-                            end = start + n_q
-                            sub_r = r_bits[start:end]
-                            dist = np.count_nonzero(np.bitwise_xor(q_bits, sub_r))
-                            if dist < min_dist:
-                                min_dist = dist
-                                if min_dist == 0:
-                                    break
-
-                        ber = min_dist / n_q if n_q > 0 else 1.0
-                        if ber < best_ber:
-                            best_ber = ber
-                            best_ref = ref_name
-                            if best_ber == 0:
-                                break
-
-                    if best_ref and best_ber < threshold:
+                    if best_ref:
                         new_name = generate_name(
                             ref_name=best_ref,
                             vid_name=f,
