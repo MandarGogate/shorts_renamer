@@ -74,8 +74,6 @@ except Exception as e:
 # ==================== Configuration ====================
 app = Flask(__name__, static_folder='web_frontend', static_url_path='')
 app.config['SECRET_KEY'] = os.environ.get('SHORTSSYNC_SECRET_KEY') or secrets.token_hex(32)
-app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max upload
-app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['FINGERPRINT_CACHE'] = '.fingerprints'
 
 # Security configuration (see shortssync/web_security.py)
@@ -1197,7 +1195,6 @@ if __name__ == '__main__':
     print("=" * 60)
 
     # Create necessary directories
-    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     os.makedirs(app.config['FINGERPRINT_CACHE'], exist_ok=True)
 
     # Check dependencies

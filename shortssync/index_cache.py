@@ -9,6 +9,11 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 import numpy as np
 
+from .constants import AUDIO_EXTS, VIDEO_EXTS
+from .log import get_logger
+
+logger = get_logger(__name__)
+
 
 class ReferenceIndexCache:
     """Cache for reference audio index to avoid re-indexing unchanged files."""
@@ -67,7 +72,7 @@ class ReferenceIndexCache:
             return ref_fps, shazam_names, cache_info
 
         except (IOError, KeyError, ValueError, json.JSONDecodeError) as exc:
-            print(f"  ⚠️  Cache load failed: {exc}")
+            logger.warning("Cache load failed: %s", exc)
             return None
     
     def _get_file_signature(self, file_path: str) -> str:
@@ -133,9 +138,7 @@ class ReferenceIndexCache:
                 return False
             
             # Check if any files changed
-            audio_exts = ('.mp3', '.wav', '.m4a', '.flac', '.ogg')
-            video_exts = ('.mp4', '.mov', '.mkv')
-            current_sig = self._get_audio_dir_signature(audio_dir, audio_exts, video_exts)
+            current_sig = self._get_audio_dir_signature(audio_dir, AUDIO_EXTS, VIDEO_EXTS)
             
             if current_sig != cache_info.get('signature'):
                 return False
@@ -179,9 +182,7 @@ class ReferenceIndexCache:
             True if saved successfully
         """
         try:
-            audio_exts = ('.mp3', '.wav', '.m4a', '.flac', '.ogg')
-            video_exts = ('.mp4', '.mov', '.mkv')
-            signature = self._get_audio_dir_signature(audio_dir, audio_exts, video_exts)
+            signature = self._get_audio_dir_signature(audio_dir, AUDIO_EXTS, VIDEO_EXTS)
 
             sanitized_names, npz_data = self._serialize_fingerprints(ref_fps)
             
@@ -209,7 +210,7 @@ class ReferenceIndexCache:
             return True
             
         except (IOError, ValueError) as e:
-            print(f"  ⚠️  Cache save failed: {e}")
+            logger.warning("Cache save failed: %s", e)
             return False
     
     def clear(self):
@@ -285,7 +286,7 @@ class ReferenceIndexCache:
             return True
 
         except (IOError, ValueError) as exc:
-            print(f"  ⚠️  Checkpoint save failed: {exc}")
+            logger.warning("Checkpoint save failed: %s", exc)
             return False
 
     def clear_checkpoint(self):

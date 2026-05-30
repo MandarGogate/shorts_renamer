@@ -444,19 +444,33 @@ class ShortsSyncApp:
         close_btn.pack(side="right", padx=(0, 10))
 
     # --- LOGIC ---
+    def _set_status(self, text: str):
+        """Thread-safe status bar update."""
+        self.root.after(0, lambda: self.status_var.set(text))
+
     def start_scan(self):
         if not self.video_dir.get() or not self.audio_dir.get():
             messagebox.showwarning("Missing Input", "Please select both directories.")
             return
-        
+
         self.scan_btn.config(state="disabled")
         self.matches = []
         self.tree.delete(*self.tree.get_children())
         self.status_var.set("Scanning...")
-        
-        threading.Thread(target=self._run_matching, daemon=True).start()
 
-    def _run_matching(self):
+        # Snapshot widget values on the main thread (BUG-007)
+        scan_opts = {
+            'audio_path': self.audio_dir.get(),
+            'video_path': self.video_dir.get(),
+            'use_shazam': self.use_shazam_var.get() and self.shazam_available,
+            'fixed_tags': self.fixed_tags_entry.get().strip(),
+            'pool_tags': self.pool_tags_entry.get().strip(),
+            'preserve_exact': self.preserve_exact_names.get(),
+        }
+
+        threading.Thread(target=self._run_matching, args=(scan_opts,), daemon=True).start()
+
+    def _run_matching(self, opts):
         fpcalc = get_fpcalc_path()
         
         if not fpcalc:
@@ -464,11 +478,11 @@ class ShortsSyncApp:
             self.root.after(0, lambda: self.scan_btn.config(state="normal"))
             return
 
-        audio_path = self.audio_dir.get()
-        video_path = self.video_dir.get()
-        use_shazam = self.use_shazam_var.get() and self.shazam_available
+        audio_path = opts['audio_path']
+        video_path = opts['video_path']
+        use_shazam = opts['use_shazam']
 
-        self.status_var.set("Indexing reference audio...")
+        self._set_status("Indexing reference audio...")
         ref_fps = {}
         used_ref_labels = set()
 
@@ -492,13 +506,13 @@ class ShortsSyncApp:
             if use_shazam:
                 try:
                     shazam_client = ShazamClient()
-                    self.status_var.set("Indexing with Shazam identification...")
+                    self._set_status("Indexing with Shazam identification...")
                 except Exception as e:
                     print(f"Shazam init error: {e}")
                     use_shazam = False
             
             for i, rel_path in enumerate(all_files):
-                self.status_var.set(f"Indexing ({i+1}/{len(all_files)}): {rel_path}")
+                self._set_status(f"Indexing ({i+1}/{len(all_files)}): {rel_path}")
                 file_path = os.path.join(audio_path, rel_path)
                 filename = os.path.basename(rel_path)
                 
@@ -560,7 +574,7 @@ class ShortsSyncApp:
             print(f"Index error: {e}")
 
         if not ref_fps:
-            self.status_var.set("No reference audio found.")
+            self._set_status("No reference audio found.")
             self.root.after(0, lambda: self.scan_btn.config(state="normal"))
             return
 
@@ -580,7 +594,7 @@ class ShortsSyncApp:
             threshold = 0.15
 
         for i, f in enumerate(vid_files):
-            self.status_var.set(f"Matching ({i+1}/{len(vid_files)}): {f}")
+            self._set_status(f"Matching ({i+1}/{len(vid_files)}): {f}")
             full_path = os.path.join(video_path, f)
             temp_wav = os.path.join(video_path, f".temp_extract_{i}.wav")
             
@@ -605,9 +619,9 @@ class ShortsSyncApp:
                             vid_name=f,
                             vid_dir=video_path,
                             used_names=proposed_names,
-                            fixed_tags=self.fixed_tags_entry.get().strip(),
-                            pool_tags=self.pool_tags_entry.get().strip(),
-                            preserve_exact=self.preserve_exact_names.get()
+                            fixed_tags=opts['fixed_tags'],
+                            pool_tags=opts['pool_tags'],
+                            preserve_exact=opts['preserve_exact']
                         )
                         proposed_names.add(new_name.lower())
                         results.append((f, new_name, f"{best_ber:.3f}"))

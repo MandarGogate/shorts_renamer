@@ -701,13 +701,15 @@ Monitor Mode (auto-process new files):
     parser.add_argument('--search', type=str, help='Search rename history for a filename or song')
     parser.add_argument('--reindex', action='store_true', help='Force re-indexing of reference audio (ignore cache)')
     parser.add_argument('--index-stats', action='store_true', help='Show reference index cache statistics')
+    parser.add_argument('--cache-stats', action='store_true', help='Show fingerprint and Shazam cache statistics')
+    parser.add_argument('--clear-cache', action='store_true', help='Clear all caches (fingerprint, Shazam, index)')
     parser.add_argument('--monitor', action='store_true', help='Continuously monitor video directory and process new files automatically')
     parser.add_argument('--monitor-interval', type=float, default=5.0, help='Polling interval in seconds for monitor mode (default: 5)')
     
     args = parser.parse_args()
     
     # Handle history/stats commands
-    if args.history or args.stats or args.search or args.index_stats:
+    if args.history or args.stats or args.search or args.index_stats or args.cache_stats or args.clear_cache:
         rename_logger = RenameLogger()
         
         if args.stats:
@@ -778,7 +780,44 @@ Monitor Mode (auto-process new files):
                 checkpoint_total = stats.get('checkpoint_total_files', 0)
                 print(f"Resume checkpoint: ✅ {checkpoint_completed}/{checkpoint_total} source files")
             sys.exit(0)
-    
+
+        if args.cache_stats:
+            from shortssync import FingerprintCache, ShazamCache
+            fp_cache = FingerprintCache()
+            print("=" * 60)
+            print("Cache Statistics")
+            print("=" * 60)
+            fp_meta = fp_cache._metadata
+            print(f"\n📁 Fingerprint cache: {fp_cache.cache_path}")
+            print(f"   Entries: {len(fp_meta)}")
+            if is_shazam_available():
+                shazam_cache = ShazamCache()
+                shazam_stats = shazam_cache.get_stats()
+                print(f"\n🎵 Shazam cache: {shazam_cache.cache_path}")
+                print(f"   Entries: {shazam_stats['total_cached']}")
+            else:
+                print("\n🎵 Shazam: not installed")
+            index_cache = ReferenceIndexCache()
+            idx_stats = index_cache.get_stats()
+            print(f"\n📦 Reference index: {'✅ cached' if idx_stats['exists'] else '❌ none'}")
+            if idx_stats['exists']:
+                print(f"   Entries: {idx_stats.get('entry_count', 'N/A')}")
+            sys.exit(0)
+
+        if args.clear_cache:
+            from shortssync import FingerprintCache, ShazamCache
+            fp_cache = FingerprintCache()
+            fp_cache.clear()
+            print("✅ Fingerprint cache cleared")
+            if is_shazam_available():
+                shazam_cache = ShazamCache()
+                shazam_cache.clear()
+                print("✅ Shazam cache cleared")
+            index_cache = ReferenceIndexCache()
+            index_cache.clear()
+            print("✅ Reference index cache cleared")
+            sys.exit(0)
+
     # Handle rename audio command
     if args.rename_audio:
         rename_audio_command(args)

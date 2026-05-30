@@ -15,7 +15,9 @@ from typing import Optional, Dict, Tuple
 import json
 import time
 
-logger = logging.getLogger(__name__)
+from .log import get_logger
+
+logger = get_logger(__name__)
 
 
 class FingerprintCache:

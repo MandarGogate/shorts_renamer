@@ -15,6 +15,7 @@ from .matcher import (
     fingerprint_ber, find_best_match,
     to_reference_fingerprint, iter_reference_fingerprints,
 )
+from .constants import AUDIO_EXTS, VIDEO_EXTS, MEDIA_EXTS, iter_media_files
 
 __all__ = [
     'get_fingerprint',
@@ -43,6 +44,10 @@ __all__ = [
     'find_best_match',
     'to_reference_fingerprint',
     'iter_reference_fingerprints',
+    'AUDIO_EXTS',
+    'VIDEO_EXTS',
+    'MEDIA_EXTS',
+    'iter_media_files',
 ]
 
 __version__ = '1.0.0'

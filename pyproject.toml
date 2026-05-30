@@ -1,3 +1,30 @@
+[project]
+name = "shortssync"
+version = "2.0.0"
+description = "Audio matching and Shazam-powered renaming for short-form video management"
+requires-python = ">=3.8"
+dependencies = [
+    "numpy>=1.20.0",
+    "moviepy>=2.0.0",
+    "yt-dlp>=2023.0.0",
+]
+
+[project.optional-dependencies]
+web = [
+    "flask>=2.3.0",
+    "flask-cors>=4.0.0",
+    "flask-socketio>=5.3.0",
+    "python-socketio>=5.9.0",
+    "werkzeug>=2.0.0",
+]
+shazam = ["shazamio>=0.6.0"]
+dev = ["pytest>=7.0", "pytest-timeout>=2.0", "ruff>=0.4.0"]
+all = ["shortssync[web,shazam,dev]"]
+
+[project.scripts]
+shortssync-cli = "cli:main"
+shortssync-web = "web_backend:main"
+
 [tool.pytest.ini_options]
 testpaths = ["."]
 python_files = ["test_*.py"]
