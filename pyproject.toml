@@ -1,0 +1,17 @@
+[tool.pytest.ini_options]
+testpaths = ["."]
+python_files = ["test_*.py"]
+addopts = "-q"
+markers = [
+    "integration: tests that shell out to ffmpeg/fpcalc",
+    "network: tests that require network access (e.g. Shazam)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+# E501 (line length) is reported but not enforced project-wide yet.
+ignore = ["E501"]

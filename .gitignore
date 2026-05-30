@@ -146,6 +146,9 @@ cython_debug/
 .DS_Store
 
 # Project-specific
+# Personal rename audit log (contains your filenames/song history)
+rename_history.jsonl
+
 # Temporary audio/video files
 *.temp.wav
 .temp_*.wav
@@ -182,5 +185,5 @@ Thumbs.db
 # *.flac
 # *.ogg
 
-# User-specific config (if you want to ignore local config overrides)
-# config_local.py
+# User-specific config (local overrides kept out of version control)
+config_local.py

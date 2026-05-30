@@ -322,11 +322,10 @@ Examples:
                             continue
                         
                         video.audio.write_audiofile(
-                            dest_path, 
-                            logger=None, 
-                            codec='mp3', 
-                            bitrate='192k',
-                            verbose=False
+                            dest_path,
+                            logger=None,
+                            codec='libmp3lame',
+                            bitrate='192k'
                         )
                         print(f"  ✅ {filename} → {output_filename} (converted)")
                     finally:

@@ -149,30 +149,32 @@ def extract_audio_safe(
     
     video_clip = None
     actual_output_path = output_path
-    
+    extracted_path = None
+
     try:
-        video_clip = VideoFileClip(video_path)
-        
-        if not video_clip.audio:
-            yield None
-            return
-        
-        if actual_output_path is None:
-            video_dir = os.path.dirname(video_path) or "."
-            base_name = f".temp_audio_{os.getpid()}_{hash(video_path) & 0xFFFFFFFF}.wav"
-            actual_output_path = os.path.join(video_dir, base_name)
-        
-        video_clip.audio.write_audiofile(
-            actual_output_path,
-            logger=None,
-            codec=codec
-        )
-        
-        yield actual_output_path
-        
-    except Exception:
-        yield None
-    
+        # Extraction failures must be resolved *before* yielding so we never
+        # yield twice (which would raise "generator didn't stop") and so that
+        # exceptions raised by the caller propagate normally through the yield.
+        try:
+            video_clip = VideoFileClip(video_path)
+
+            if video_clip.audio:
+                if actual_output_path is None:
+                    video_dir = os.path.dirname(video_path) or "."
+                    base_name = f".temp_audio_{os.getpid()}_{hash(video_path) & 0xFFFFFFFF}.wav"
+                    actual_output_path = os.path.join(video_dir, base_name)
+
+                video_clip.audio.write_audiofile(
+                    actual_output_path,
+                    logger=None,
+                    codec=codec
+                )
+                extracted_path = actual_output_path
+        except Exception:
+            extracted_path = None
+
+        yield extracted_path
+
     finally:
         # Always clean up
         if video_clip is not None:

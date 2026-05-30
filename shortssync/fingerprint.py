@@ -5,6 +5,7 @@ Provides caching and robust fingerprint extraction.
 
 import os
 import hashlib
+import logging
 import shutil
 import subprocess
 import numpy as np
@@ -12,6 +13,8 @@ from pathlib import Path
 from typing import Optional, Dict, Tuple
 import json
 import time
+
+logger = logging.getLogger(__name__)
 
 
 class FingerprintCache:
@@ -166,31 +169,42 @@ def get_fingerprint(path: str, fpcalc_path: Optional[str] = None, timeout: int =
     if not fpcalc_path:
         raise RuntimeError("fpcalc not found. Install chromaprint.")
     
+    cmd = [fpcalc_path, "-raw", path]
     try:
-        cmd = [fpcalc_path, "-raw", path]
         res = subprocess.run(
-            cmd, 
-            capture_output=True, 
-            text=True, 
-            check=True, 
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True,
             timeout=timeout
         )
-        
+    except subprocess.TimeoutExpired:
+        logger.warning("fpcalc timed out after %ss for %s", timeout, path)
+        return None
+    except subprocess.CalledProcessError as exc:
+        logger.warning(
+            "fpcalc exited %s for %s: %s",
+            exc.returncode, path, (exc.stderr or "").strip()
+        )
+        return None
+    except OSError as exc:
+        logger.warning("Could not execute fpcalc for %s: %s", path, exc)
+        return None
+
+    try:
         for line in res.stdout.splitlines():
             if line.startswith("FINGERPRINT="):
                 raw = line[12:]
                 if not raw:
+                    logger.debug("Empty fingerprint from fpcalc for %s", path)
                     return None
                 return np.array([int(x) for x in raw.split(',')], dtype=np.uint32)
-        
+    except ValueError as exc:
+        logger.warning("Malformed fingerprint data for %s: %s", path, exc)
         return None
-        
-    except subprocess.TimeoutExpired:
-        return None
-    except subprocess.CalledProcessError:
-        return None
-    except Exception:
-        return None
+
+    logger.debug("No FINGERPRINT line in fpcalc output for %s", path)
+    return None
 
 
 def get_fingerprint_cached(

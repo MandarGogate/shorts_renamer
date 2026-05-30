@@ -139,6 +139,36 @@ Then open `http://localhost:5001` (or check terminal for actual port)
 - 🎤 Shazam integration toggle
 - 🔄 No installation needed on client devices
 
+#### 🔒 Web Security
+
+The web server controls your local filesystem (it can read directories, rename
+files, and download from URLs), so it is **locked down to your own machine by
+default**:
+
+- **Binds to `127.0.0.1`** (localhost only). It will **refuse to start** on a
+  non-loopback host unless an auth token is set.
+- **No authentication** is required for purely local use.
+
+To expose it on a network (LAN, reverse proxy, etc.), set environment variables:
+
+| Variable | Purpose |
+|----------|---------|
+| `SHORTSSYNC_TOKEN` | Shared secret required on every `/api/*` call and Socket.IO connection. Open the UI with `?token=<secret>` once; it is remembered in the browser. |
+| `SHORTSSYNC_HOST` | Bind host (default `127.0.0.1`). A non-loopback host requires `SHORTSSYNC_TOKEN`. |
+| `SHORTSSYNC_ROOTS` | `:`-separated allow-list of directories the server may read/write. When unset, any resolvable path is allowed (local-only convenience). Set this whenever the server is reachable by others. |
+| `SHORTSSYNC_CORS_ORIGINS` | Comma-separated allowed browser origins (defaults to localhost). |
+
+Download endpoints only accept public `http(s)` URLs (private/loopback/link-local
+addresses are rejected to prevent SSRF).
+
+```bash
+# Example: expose on the LAN with a token and a path allow-list
+SHORTSSYNC_HOST=0.0.0.0 \
+SHORTSSYNC_TOKEN=$(openssl rand -hex 16) \
+SHORTSSYNC_ROOTS="/Users/me/Videos:/Users/me/Music" \
+python web_backend.py
+```
+
 ---
 
 ## 📚 Tools & Scripts

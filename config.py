@@ -1,20 +1,23 @@
 """Application defaults.
 
-This module now only exposes defaults and a helper to return them.
-No JSON file I/O or project-local config paths are provided.
-If you want to change defaults, edit `DEFAULT_SETTINGS` directly.
+Paths are intentionally **not** hardcoded here so this file can be committed
+without leaking a personal directory layout. Resolution order for the source
+directories:
+
+1. ``SHORTSSYNC_VIDEO_DIR`` / ``SHORTSSYNC_AUDIO_DIR`` environment variables.
+2. An optional, untracked ``config_local.py`` (see ``config.example.py``).
+3. Empty string -> the CLI/GUI/web will ask you to provide a directory.
+
+Non-path defaults (tags, matching flags) can be tuned directly below.
 """
 
+import os
+
 DEFAULT_SETTINGS = {
-    # 'video_dir': '/Users/mandargogate/Work/CC/04Edited/',
-    # 'video_dir': '/Users/mandargogate/Work/CC/03Outputs/',
-    'video_dir': '/Users/mandargogate/Work/CC/05UploadQueue/',
-    # 'video_dir': '/Users/mandargogate/Work/CC/05UploadQueue/',
-    'audio_dir': '/Users/mandargogate/Work/CC/09trending',
+    'video_dir': os.environ.get('SHORTSSYNC_VIDEO_DIR', ''),
+    'audio_dir': os.environ.get('SHORTSSYNC_AUDIO_DIR', ''),
     'fixed_tags': '#dance #viral #shorts',
     'pool_tags': '#fyp #trending #foryou #trend',
-    # 'fixed_tags': '#shorts',
-    # 'pool_tags': '#1 #2 #3 #4 #5 #6 #7 #8 #9 #10',
     'preserve_exact_titles': True,
     'preserve_exact_names': False,
     'move_files': False,
@@ -46,11 +49,18 @@ DEFAULT_SETTINGS = {
     'shazam_fallback_any': True,  # Use Shazam name directly when song not in reference library
     # Slowed audio detection
     'detect_slowed': True,  # Detect slowed videos and add [SLOWED] label
-    # 'slowed_speeds': [0.75, 0.5],  # Speed factors to check for slowed detection
     'slowed_speeds': [],  # Speed factors to check for slowed detection
 }
+
+# Optional local overrides kept out of version control (see config.example.py).
+try:
+    from config_local import DEFAULT_SETTINGS as _LOCAL_SETTINGS  # type: ignore
+    if isinstance(_LOCAL_SETTINGS, dict):
+        DEFAULT_SETTINGS.update(_LOCAL_SETTINGS)
+except ImportError:
+    pass
+
 
 def get_defaults():
     """Return a copy of the default settings dict."""
     return dict(DEFAULT_SETTINGS)
-    

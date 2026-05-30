@@ -26,6 +26,35 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchMatches();
 });
 
+// ==================== Auth ====================
+// Optional bearer token. Pass once via ?token=... (persisted) or set in localStorage.
+// When no token is configured server-side, this is a no-op.
+function getAuthToken() {
+    try {
+        const url = new URL(window.location.href);
+        const fromQuery = url.searchParams.get('token');
+        if (fromQuery) {
+            localStorage.setItem('shortsync_token', fromQuery);
+        }
+        return localStorage.getItem('shortsync_token') || '';
+    } catch {
+        return '';
+    }
+}
+
+// Inject the auth token into all same-origin /api requests without touching each call site.
+(function wrapFetchWithAuth() {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = (input, init = {}) => {
+        const token = getAuthToken();
+        const target = typeof input === 'string' ? input : (input && input.url) || '';
+        if (token && target.startsWith('/api')) {
+            init = { ...init, headers: { ...(init.headers || {}), 'X-Auth-Token': token } };
+        }
+        return originalFetch(input, init);
+    };
+})();
+
 // ==================== WebSocket Connection ====================
 function initializeSocket() {
     // Connect to the same host and port that served this page
@@ -35,7 +64,8 @@ function initializeSocket() {
     const serverUrl = `${protocol}//${host}:${port}`;
 
     socket = io(serverUrl, {
-        transports: ['websocket', 'polling']
+        transports: ['websocket', 'polling'],
+        auth: { token: getAuthToken() }
     });
 
     socket.on('connect', () => {

@@ -24,6 +24,7 @@ from shortssync import (
     get_fingerprint_cached,
     generate_name,
     build_reference_label,
+    sanitize_filename,
     get_fpcalc_path,
     VideoAudioExtractor,
     ShazamClient,
@@ -32,6 +33,14 @@ from shortssync import (
     RenameLogger,
 )
 from shortssync.web_state import WebStateStore, validate_review_filename
+from shortssync.web_security import (
+    get_auth_token,
+    token_matches,
+    is_loopback_host,
+    get_allowed_roots,
+    resolve_within_roots,
+    is_safe_download_url,
+)
 
 try:
     import yt_dlp
@@ -63,13 +72,52 @@ except Exception as e:
 
 # ==================== Configuration ====================
 app = Flask(__name__, static_folder='web_frontend', static_url_path='')
-app.config['SECRET_KEY'] = secrets.token_hex(32)
+app.config['SECRET_KEY'] = os.environ.get('SHORTSSYNC_SECRET_KEY') or secrets.token_hex(32)
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max upload
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['FINGERPRINT_CACHE'] = '.fingerprints'
 
-CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+# Security configuration (see shortssync/web_security.py)
+AUTH_TOKEN = get_auth_token()
+ALLOWED_ROOTS = get_allowed_roots()
+
+# Restrict CORS to localhost origins by default; the bundled UI is same-origin so
+# this does not affect normal use. Override with SHORTSSYNC_CORS_ORIGINS (comma list).
+_cors_env = os.environ.get('SHORTSSYNC_CORS_ORIGINS', '').strip()
+if _cors_env:
+    _cors_origins = [o.strip() for o in _cors_env.split(',') if o.strip()]
+else:
+    # Flask-CORS treats a string origin as a regex pattern.
+    _cors_origins = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+CORS(app, origins=_cors_origins)
+# Socket.IO connections are additionally guarded by the auth token (see handle_connect).
+socketio = SocketIO(
+    app,
+    cors_allowed_origins=_cors_env.split(',') if _cors_env else '*',
+    async_mode='threading',
+)
+
+
+@app.before_request
+def _require_auth():
+    """Require a bearer token on /api/* when SHORTSSYNC_TOKEN is configured."""
+    if AUTH_TOKEN is None:
+        return None
+    if not request.path.startswith('/api/'):
+        return None
+    provided = request.headers.get('X-Auth-Token')
+    if not provided:
+        auth_header = request.headers.get('Authorization', '')
+        if auth_header.startswith('Bearer '):
+            provided = auth_header[len('Bearer '):].strip()
+    if not token_matches(provided, AUTH_TOKEN):
+        return jsonify({'error': 'Unauthorized'}), 401
+    return None
+
+
+def _validate_dir(path):
+    """Resolve a request-supplied directory inside the allow-list (BUG-002)."""
+    return resolve_within_roots(path, ALLOWED_ROOTS)
 
 # Global state
 processing_status = {
@@ -218,10 +266,11 @@ def index_reference_audio():
     if not audio_dir:
         return jsonify({'error': 'Audio directory is required'}), 400
 
-    # Validate and sanitize path (prevent path traversal)
-    audio_dir = os.path.abspath(os.path.normpath(audio_dir))
-    if not os.path.exists(audio_dir) or not os.path.isdir(audio_dir):
-        return jsonify({'error': 'Invalid audio directory'}), 400
+    # Validate and sanitize path (prevent path traversal + enforce allow-list)
+    resolved = _validate_dir(audio_dir)
+    if resolved is None or not resolved.is_dir():
+        return jsonify({'error': 'Invalid or disallowed audio directory'}), 400
+    audio_dir = str(resolved)
 
     # Start indexing in background thread
     def index_task():
@@ -393,15 +442,17 @@ def match_videos():
     except (TypeError, ValueError):
         return jsonify({'error': 'Threshold must be a number'}), 400
 
-    # Validate and sanitize paths
-    video_dir = os.path.abspath(os.path.normpath(video_dir))
-    if not os.path.exists(video_dir) or not os.path.isdir(video_dir):
-        return jsonify({'error': 'Invalid video directory'}), 400
-    
+    # Validate and sanitize paths (enforce allow-list)
+    resolved_video = _validate_dir(video_dir)
+    if resolved_video is None or not resolved_video.is_dir():
+        return jsonify({'error': 'Invalid or disallowed video directory'}), 400
+    video_dir = str(resolved_video)
+
     if save_new_audio:
-        audio_dir = os.path.abspath(os.path.normpath(audio_dir))
-        if not os.path.exists(audio_dir):
-            return jsonify({'error': 'Invalid audio directory for saving'}), 400
+        resolved_audio = _validate_dir(audio_dir)
+        if resolved_audio is None or not resolved_audio.exists():
+            return jsonify({'error': 'Invalid or disallowed audio directory for saving'}), 400
+        audio_dir = str(resolved_audio)
 
     # Start matching in background thread
     def match_task():
@@ -758,7 +809,10 @@ def rename_videos():
     if not batch_video_dir:
         return jsonify({'error': 'Review batch is missing its video directory'}), 400
 
-    video_dir = os.path.abspath(os.path.normpath(batch_video_dir))
+    resolved_video = _validate_dir(batch_video_dir)
+    if resolved_video is None or not resolved_video.is_dir():
+        return jsonify({'error': 'Invalid or disallowed video directory'}), 400
+    video_dir = str(resolved_video)
     requested_video_dir = data.get('video_dir')
     if requested_video_dir:
         requested_video_dir = os.path.abspath(os.path.normpath(requested_video_dir))
@@ -768,10 +822,6 @@ def rename_videos():
     move_files = data.get('move_files', False)
     if not isinstance(move_files, bool):
         return jsonify({'error': 'move_files must be a boolean'}), 400
-
-    # Validate and sanitize path
-    if not os.path.exists(video_dir) or not os.path.isdir(video_dir):
-        return jsonify({'error': 'Invalid video directory'}), 400
 
     # Start renaming in background thread
     def rename_task():
@@ -907,11 +957,17 @@ def download_video():
     if not url:
         return jsonify({'error': 'URL is required'}), 400
 
+    if not is_safe_download_url(url):
+        return jsonify({'error': 'URL must be a public http(s) address'}), 400
+
     if not output_dir:
         output_dir = os.path.join(os.getcwd(), 'downloads')
 
-    # Validate output directory
-    output_dir = os.path.abspath(os.path.normpath(output_dir))
+    # Validate output directory (enforce allow-list)
+    resolved_output = _validate_dir(output_dir)
+    if resolved_output is None:
+        return jsonify({'error': 'Invalid or disallowed output directory'}), 400
+    output_dir = str(resolved_output)
 
     # Start download in background thread
     def download_task():
@@ -1008,8 +1064,11 @@ def download_mp3():
     if not audio_dir:
         return jsonify({'error': 'audio_dir is not configured'}), 400
 
-    # Validate audio directory
-    audio_dir = os.path.abspath(os.path.normpath(audio_dir))
+    # Validate audio directory (enforce allow-list)
+    resolved_audio = _validate_dir(audio_dir)
+    if resolved_audio is None:
+        return jsonify({'error': 'Invalid or disallowed audio directory'}), 400
+    audio_dir = str(resolved_audio)
 
     # Start download in background thread
     def download_task():
@@ -1029,9 +1088,17 @@ def download_mp3():
                 for i, item in enumerate(urls_data, 1):
                     url = item.get('url', '').strip()
                     filename = item.get('filename', '').strip() or None
-                    
+                    if filename:
+                        # Strip path separators / traversal so outtmpl stays in audio_dir.
+                        filename = sanitize_filename(filename) or None
+
                     if not url:
                         emit_status(f"[{i}/{len(urls_data)}] Skipped: Empty URL")
+                        failed += 1
+                        continue
+
+                    if not is_safe_download_url(url):
+                        emit_status(f"[{i}/{len(urls_data)}] Skipped: unsafe URL")
                         failed += 1
                         continue
 
@@ -1101,10 +1168,19 @@ def download_mp3():
 # ==================== WebSocket Events ====================
 
 @socketio.on('connect')
-def handle_connect():
-    """Handle client connection."""
+def handle_connect(auth=None):
+    """Handle client connection (reject unauthenticated clients when a token is set)."""
+    if AUTH_TOKEN is not None:
+        provided = None
+        if isinstance(auth, dict):
+            provided = auth.get('token')
+        if not provided:
+            provided = request.args.get('token')
+        if not token_matches(provided, AUTH_TOKEN):
+            return False  # Refuse the Socket.IO connection.
     emit('status_update', processing_status)
     print("Client connected")
+    return None
 
 @socketio.on('disconnect')
 def handle_disconnect():
@@ -1167,11 +1243,28 @@ if __name__ == '__main__':
     # In production, debug=False and don't allow unsafe werkzeug
     debug_mode = not is_production
     allow_unsafe = not is_production
-    
+
+    # BUG-001: bind to loopback by default. Only expose to other hosts when an
+    # auth token is configured, otherwise the server is an open file-system /
+    # download control plane.
+    host = os.environ.get('SHORTSSYNC_HOST', '127.0.0.1')
+    if not is_loopback_host(host) and AUTH_TOKEN is None:
+        print("\n❌ Refusing to bind to a non-loopback host without authentication.")
+        print("   Set SHORTSSYNC_TOKEN=<secret> to expose the server, or use the")
+        print("   default 127.0.0.1 bind for local-only use.")
+        sys.exit(1)
+
+    if AUTH_TOKEN is None:
+        print("ℹ️  Auth disabled (local only). Set SHORTSSYNC_TOKEN to require a bearer token.")
+    else:
+        print("🔒 Auth enabled: send the token via 'X-Auth-Token' header or '?token=' query param.")
+    if ALLOWED_ROOTS:
+        print(f"📁 Path allow-list active: {[str(r) for r in ALLOWED_ROOTS]}")
+
     socketio.run(
-        app, 
-        host='0.0.0.0', 
-        port=port, 
-        debug=debug_mode, 
+        app,
+        host=host,
+        port=port,
+        debug=debug_mode,
         allow_unsafe_werkzeug=allow_unsafe
     )
