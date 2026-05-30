@@ -12,6 +12,10 @@ from typing import Optional, Dict, Any
 from dataclasses import dataclass, asdict
 import time
 
+from .log import get_logger
+
+logger = get_logger(__name__)
+
 # Try to import shazamio
 try:
     from shazamio import Shazam
@@ -222,13 +226,23 @@ class ShazamClient:
             if cached:
                 return cached
         
-        # Call Shazam API with timeout
+        # Call Shazam API with timeout (env var overrides for slow/throttled APIs)
+        env_timeout = os.environ.get('SHORTSSYNC_SHAZAM_TIMEOUT')
+        try:
+            eff_timeout = int(env_timeout) if env_timeout else timeout
+        except ValueError:
+            eff_timeout = timeout
         try:
             result = await asyncio.wait_for(
                 self.shazam.recognize(audio_path),
-                timeout=timeout
+                timeout=eff_timeout
             )
         except asyncio.TimeoutError:
+            logger.warning(
+                "Shazam recognize timed out after %ss for %s "
+                "(API may be slow/throttled; set SHORTSSYNC_SHAZAM_TIMEOUT to raise)",
+                eff_timeout, os.path.basename(audio_path)
+            )
             return None
         
         if not result or 'track' not in result:
