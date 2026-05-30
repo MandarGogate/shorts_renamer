@@ -199,8 +199,10 @@ class ReferenceIndexCache:
                 'count': len(ref_fps)
             }
             
-            with open(self.index_file, 'w') as f:
+            tmp = self.index_file.with_suffix('.tmp')
+            with open(tmp, 'w') as f:
                 json.dump(cache_info, f, indent=2)
+            tmp.replace(self.index_file)
 
             self.clear_checkpoint()
             
@@ -275,8 +277,10 @@ class ReferenceIndexCache:
                 'count': len(ref_fps)
             }
 
-            with open(self.checkpoint_file, 'w') as handle:
+            tmp = self.checkpoint_file.with_suffix('.tmp')
+            with open(tmp, 'w') as handle:
                 json.dump(checkpoint_info, handle, indent=2)
+            tmp.replace(self.checkpoint_file)
 
             return True
 

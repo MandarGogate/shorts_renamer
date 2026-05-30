@@ -15,16 +15,8 @@ import argparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from shortssync import ShazamClient, is_shazam_available
+from shortssync import ShazamClient, is_shazam_available, sanitize_filename
 import asyncio
-
-
-def sanitize_filename(name):
-    """Remove invalid filename characters."""
-    invalid_chars = '<>:"/\\|?*'
-    for char in invalid_chars:
-        name = name.replace(char, '_')
-    return name.strip(' .')
 
 
 def rename_audio_files(audio_dir, dry_run=False, recursive=False):

@@ -8,6 +8,7 @@ import hashlib
 import logging
 import shutil
 import subprocess
+import threading
 import numpy as np
 from pathlib import Path
 from typing import Optional, Dict, Tuple
@@ -19,11 +20,12 @@ logger = logging.getLogger(__name__)
 
 class FingerprintCache:
     """Thread-safe fingerprint cache with metadata tracking."""
-    
+
     def __init__(self, cache_dir: str = ".fingerprints"):
         self.cache_path = Path(cache_dir)
         self.cache_path.mkdir(exist_ok=True)
         self._metadata_file = self.cache_path / ".cache_metadata.json"
+        self._lock = threading.RLock()
         self._metadata = self._load_metadata()
     
     def _normalize_cache_source(self, file_path: str, cache_key_source: Optional[str] = None) -> str:
@@ -54,10 +56,12 @@ class FingerprintCache:
         return {}
     
     def _save_metadata(self):
-        """Save cache metadata."""
+        """Save cache metadata atomically."""
         try:
-            with open(self._metadata_file, 'w') as f:
+            tmp = self._metadata_file.with_suffix('.tmp')
+            with open(tmp, 'w') as f:
                 json.dump(self._metadata, f)
+            tmp.replace(self._metadata_file)
         except IOError:
             pass
     
@@ -66,68 +70,68 @@ class FingerprintCache:
         source_path = self._normalize_cache_source(file_path, cache_key_source)
         cache_key = self._get_cache_key(file_path, cache_key_source)
         cache_file = self.cache_path / f"{cache_key}.npy"
-        
+
         if not cache_file.exists():
             return None
-        
-        try:
-            # Verify the source file identity hasn't changed
-            current_stat = os.stat(source_path)
-            cached_info = self._metadata.get(cache_key, {})
-            
-            if cached_info.get('mtime') == current_stat.st_mtime and \
-               cached_info.get('size') == current_stat.st_size:
-                return np.load(cache_file, allow_pickle=False)
-        except (OSError, IOError, ValueError):
-            pass
-        
-        # Cache invalid or corrupted
-        self._remove_cache_entry(cache_key)
-        return None
+
+        with self._lock:
+            try:
+                current_stat = os.stat(source_path)
+                cached_info = self._metadata.get(cache_key, {})
+
+                if cached_info.get('mtime') == current_stat.st_mtime and \
+                   cached_info.get('size') == current_stat.st_size:
+                    return np.load(cache_file, allow_pickle=False)
+            except (OSError, IOError, ValueError):
+                pass
+
+            self._remove_cache_entry(cache_key)
+            return None
     
     def set(self, file_path: str, fingerprint: np.ndarray, cache_key_source: Optional[str] = None):
         """Cache a fingerprint."""
         source_path = self._normalize_cache_source(file_path, cache_key_source)
         cache_key = self._get_cache_key(file_path, cache_key_source)
         cache_file = self.cache_path / f"{cache_key}.npy"
-        
+
         try:
             np.save(cache_file, fingerprint)
-            
-            # Update metadata
+
             stat = os.stat(source_path)
-            self._metadata[cache_key] = {
-                'mtime': stat.st_mtime,
-                'size': stat.st_size,
-                'path': source_path,
-                'cached_at': time.time()
-            }
-            self._save_metadata()
+            with self._lock:
+                self._metadata[cache_key] = {
+                    'mtime': stat.st_mtime,
+                    'size': stat.st_size,
+                    'path': source_path,
+                    'cached_at': time.time()
+                }
+                self._save_metadata()
         except (IOError, OSError):
-            pass  # Caching failed, but fingerprint is still valid
+            pass
     
     def _remove_cache_entry(self, cache_key: str):
-        """Remove a cache entry and its metadata."""
+        """Remove a cache entry and its metadata. Caller must hold self._lock."""
         cache_file = self.cache_path / f"{cache_key}.npy"
         try:
             if cache_file.exists():
                 cache_file.unlink()
         except OSError:
             pass
-        
+
         if cache_key in self._metadata:
             del self._metadata[cache_key]
             self._save_metadata()
-    
+
     def clear(self):
         """Clear all cached fingerprints."""
-        for f in self.cache_path.glob("*.npy"):
-            try:
-                f.unlink()
-            except OSError:
-                pass
-        self._metadata = {}
-        self._save_metadata()
+        with self._lock:
+            for f in self.cache_path.glob("*.npy"):
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
+            self._metadata = {}
+            self._save_metadata()
     
 # Global cache instance
 _global_cache: Optional[FingerprintCache] = None

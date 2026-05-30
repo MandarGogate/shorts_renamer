@@ -9,7 +9,7 @@ from .fingerprint import (
 from .naming import generate_name, sanitize_filename, build_reference_label
 from .shazam_client import ShazamClient, ShazamCache, is_shazam_available, identify_song, get_song_name
 from .utils import extract_audio_safe, get_fpcalc_path, VideoAudioExtractor
-from .rename_logger import RenameLogger, log_rename
+from .rename_logger import RenameLogger, log_rename, commit_rename, RenameResult
 from .index_cache import ReferenceIndexCache
 from .matcher import (
     fingerprint_ber, find_best_match,
@@ -36,6 +36,8 @@ __all__ = [
     'VideoAudioExtractor',
     'RenameLogger',
     'log_rename',
+    'commit_rename',
+    'RenameResult',
     'ReferenceIndexCache',
     'fingerprint_ber',
     'find_best_match',

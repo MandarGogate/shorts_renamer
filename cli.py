@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import re
 import tempfile
+import time
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -18,6 +19,7 @@ from shortssync import (
     get_fingerprint_cached,
     generate_slowed_fingerprints,
     generate_name,
+    sanitize_filename,
     build_reference_label,
     get_fpcalc_path,
     VideoAudioExtractor,
@@ -84,12 +86,7 @@ def rename_audio_command(args):
                 continue
             
             # Create new name
-            def sanitize(name):
-                for c in '<>:\"/\\|?*':
-                    name = name.replace(c, '_')
-                return name.strip()
-            
-            new_name = f"{sanitize(result.artist)} - {sanitize(result.title)}"
+            new_name = f"{sanitize_filename(result.artist, max_length=None)} - {sanitize_filename(result.title, max_length=None)}"
             _, ext = os.path.splitext(filename)
             new_filename = f"{new_name}{ext}"
             
@@ -968,6 +965,10 @@ Monitor Mode (auto-process new files):
 
                 completed_file_set = set(completed_files)
 
+                _checkpoint_interval = 10  # save every N files
+                _checkpoint_clock = time.time()
+                _checkpoint_period = 30.0  # or every T seconds
+
                 for rel_path in all_files:
                     if rel_path in completed_file_set:
                         continue
@@ -1035,14 +1036,17 @@ Monitor Mode (auto-process new files):
 
                         completed_files.append(rel_path)
                         completed_file_set.add(rel_path)
-                        index_cache.save_checkpoint(
-                            audio_dir,
-                            ref_fps,
-                            shazam_names,
-                            config_for_cache,
-                            all_files,
-                            completed_files
-                        )
+                        _since = len(completed_files) % _checkpoint_interval
+                        if _since == 0 or (time.time() - _checkpoint_clock) >= _checkpoint_period:
+                            index_cache.save_checkpoint(
+                                audio_dir,
+                                ref_fps,
+                                shazam_names,
+                                config_for_cache,
+                                all_files,
+                                completed_files
+                            )
+                            _checkpoint_clock = time.time()
 
                     except KeyboardInterrupt:
                         print("\n⏸️  Indexing interrupted. Saving resume checkpoint...")
@@ -1208,7 +1212,6 @@ Monitor Mode (auto-process new files):
 
                             if save_new_audio and temp_wav and os.path.exists(temp_wav) and shazam_name:
                                 try:
-                                    from shortssync import sanitize_filename
                                     safe_name = sanitize_filename(shazam_name)
                                     target_path = os.path.join(audio_dir, f"{safe_name}.mp3")
                                     counter = 1

@@ -6,6 +6,7 @@ import os
 import json
 import hashlib
 import asyncio
+import threading
 from pathlib import Path
 from typing import Optional, Dict, Any
 from dataclasses import dataclass, asdict
@@ -48,12 +49,13 @@ class ShazamResult:
 
 
 class ShazamCache:
-    """Cache for Shazam identification results."""
-    
+    """Thread-safe cache for Shazam identification results."""
+
     def __init__(self, cache_dir: str = ".shazam_cache"):
         self.cache_path = Path(cache_dir)
         self.cache_path.mkdir(exist_ok=True)
         self._index_file = self.cache_path / "index.json"
+        self._lock = threading.RLock()
         self._index = self._load_index()
     
     def _get_cache_key(self, audio_path: str) -> str:
@@ -81,10 +83,12 @@ class ShazamCache:
         return {}
     
     def _save_index(self):
-        """Save cache index."""
+        """Save cache index atomically."""
         try:
-            with open(self._index_file, 'w', encoding='utf-8') as f:
+            tmp = self._index_file.with_suffix('.tmp')
+            with open(tmp, 'w', encoding='utf-8') as f:
                 json.dump(self._index, f, indent=2)
+            tmp.replace(self._index_file)
         except IOError:
             pass
     
@@ -92,76 +96,75 @@ class ShazamCache:
         """Get cached result if valid."""
         cache_key = self._get_cache_key(audio_path)
         cache_file = self._get_cache_file(cache_key)
-        
+
         if not cache_file.exists():
             return None
-        
-        try:
-            # Verify file hasn't changed
-            current_stat = os.stat(audio_path)
-            cached_info = self._index.get(cache_key, {})
-            
-            if (cached_info.get('size') == current_stat.st_size and
-                cached_info.get('mtime') == current_stat.st_mtime):
-                
-                with open(cache_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    return ShazamResult.from_dict(data)
-                    
-        except (OSError, IOError, json.JSONDecodeError, KeyError):
-            pass
-        
-        # Cache invalid
-        self._remove_cache_entry(cache_key)
-        return None
+
+        with self._lock:
+            try:
+                current_stat = os.stat(audio_path)
+                cached_info = self._index.get(cache_key, {})
+
+                if (cached_info.get('size') == current_stat.st_size and
+                    cached_info.get('mtime') == current_stat.st_mtime):
+
+                    with open(cache_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        return ShazamResult.from_dict(data)
+
+            except (OSError, IOError, json.JSONDecodeError, KeyError):
+                pass
+
+            self._remove_cache_entry(cache_key)
+            return None
     
     def set(self, audio_path: str, result: ShazamResult):
         """Cache a Shazam result."""
         cache_key = self._get_cache_key(audio_path)
         cache_file = self._get_cache_file(cache_key)
-        
+
         try:
-            # Save result
             with open(cache_file, 'w', encoding='utf-8') as f:
                 json.dump(result.to_dict(), f, indent=2)
-            
-            # Update index
+
             stat = os.stat(audio_path)
-            self._index[cache_key] = {
-                'path': audio_path,
-                'size': stat.st_size,
-                'mtime': stat.st_mtime,
-                'cached_at': time.time(),
-                'title': result.title,
-                'artist': result.artist
-            }
-            self._save_index()
-            
+            with self._lock:
+                self._index[cache_key] = {
+                    'path': audio_path,
+                    'size': stat.st_size,
+                    'mtime': stat.st_mtime,
+                    'cached_at': time.time(),
+                    'title': result.title,
+                    'artist': result.artist
+                }
+                self._save_index()
+
         except (IOError, OSError):
             pass
     
     def _remove_cache_entry(self, cache_key: str):
-        """Remove a cache entry."""
+        """Remove a cache entry. Caller must hold self._lock."""
         cache_file = self._get_cache_file(cache_key)
         try:
             if cache_file.exists():
                 cache_file.unlink()
         except OSError:
             pass
-        
+
         if cache_key in self._index:
             del self._index[cache_key]
             self._save_index()
-    
+
     def clear(self):
         """Clear all cached results."""
-        for f in self.cache_path.glob("*.json"):
-            try:
-                f.unlink()
-            except OSError:
-                pass
-        self._index = {}
-        self._save_index()
+        with self._lock:
+            for f in self.cache_path.glob("*.json"):
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
+            self._index = {}
+            self._save_index()
     
     def list_cached(self) -> Dict[str, Any]:
         """List all cached entries."""

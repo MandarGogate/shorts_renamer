@@ -4,9 +4,60 @@ Uses JSON Lines format for easy appending and parsing.
 """
 
 import json
+import os
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List
+
+
+@dataclass
+class RenameResult:
+    """Outcome of a commit_rename attempt."""
+    success: bool
+    already_named: bool = False
+    error: Optional[str] = None
+
+
+def commit_rename(
+    src: str,
+    dst: str,
+    logger: Optional['RenameLogger'] = None,
+    *,
+    original_name: Optional[str] = None,
+    new_name: Optional[str] = None,
+    video_dir: Optional[str] = None,
+    log_kwargs: Optional[Dict[str, Any]] = None,
+) -> RenameResult:
+    """
+    Safely rename *src* to *dst* with conflict detection and optional logging.
+
+    Returns a RenameResult indicating success, already-named, or error.
+    """
+    if not os.path.exists(src):
+        return RenameResult(success=False, error='source not found')
+
+    if os.path.lexists(dst):
+        try:
+            if os.path.samefile(src, dst):
+                return RenameResult(success=True, already_named=True)
+        except OSError:
+            pass
+        return RenameResult(success=False, error='target exists')
+
+    try:
+        os.rename(src, dst)
+    except OSError as exc:
+        return RenameResult(success=False, error=str(exc))
+
+    if logger is not None:
+        _orig = original_name or os.path.basename(src)
+        _new = new_name or os.path.basename(dst)
+        _dir = video_dir or os.path.dirname(src)
+        kw = log_kwargs or {}
+        logger.log_rename(original_name=_orig, new_name=_new, video_dir=_dir, **kw)
+
+    return RenameResult(success=True)
 
 
 class RenameLogger:
