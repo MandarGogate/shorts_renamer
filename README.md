@@ -734,9 +734,9 @@ This project is open source and available under the MIT License.
 For issues, questions, or feature requests:
 1. Check [Troubleshooting](#-troubleshooting) section
 2. Read the specific feature guides:
-   - [Shazam Integration](SHAZAM_INTEGRATION.md)
-   - [Slowed Audio Guide](SLOWED_AUDIO_GUIDE.md)
-   - [Chromaprint Speed Guide](CHROMAPRINT_SPEED_GUIDE.md)
+   - [Shazam Integration](docs/SHAZAM_INTEGRATION.md)
+   - [Slowed Audio Guide](docs/SLOWED_AUDIO_GUIDE.md)
+   - [Chromaprint Speed Guide](docs/CHROMAPRINT_SPEED_GUIDE.md)
 3. Open an issue on GitHub
 
 ---
