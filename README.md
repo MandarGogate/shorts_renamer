@@ -2,7 +2,62 @@
 
 **Audio Matching and Shazam-Powered Renaming for Short-Form Video Management**
 
-ShortsSync is a powerful automation platform that combines Chromaprint fingerprinting with Shazam-based identification to automatically match and rename short-form videos based on their audio content. Available in GUI, CLI, monitor, and web interface modes, it's designed for content creators managing large libraries of TikTok, Instagram Reels, and YouTube Shorts.
+ShortsSync is a single-host automation tool that combines Chromaprint fingerprinting with optional Shazam-based identification to match and rename short-form videos based on their audio content. It is available in GUI, CLI, monitor, and web interface modes for content creators managing TikTok, Instagram Reels, and YouTube Shorts.
+
+**Current implementation:** 🎵 Shazam integration | 🎯 Shazam-only mode | 🐌 Slowed-audio support | 🧩 Shared vectorized matcher | 🔒 Local-first web security
+
+> **Operational note:** The web server is local-only by default (`127.0.0.1`) and normally starts at port `5001`. Use `--dry-run` before any batch rename. The tool changes files on disk; it does not provide a database-backed undo system.
+
+## Current setup and operations
+
+### Install and configure
+
+```bash
+python3 -m pip install -r requirements.txt
+# macOS
+brew install ffmpeg chromaprint
+# Debian/Ubuntu
+sudo apt install ffmpeg libchromaprint-tools
+```
+
+Set `SHORTSSYNC_VIDEO_DIR` and `SHORTSSYNC_AUDIO_DIR`, or copy `config.example.py` to the ignored `config_local.py` and set `DEFAULT_SETTINGS`. Environment directory values take precedence over local config, which takes precedence over the committed defaults in `config.py`.
+
+### Run the main workflows
+
+```bash
+# Preview a batch without changing files
+python3 cli.py -v /path/to/videos -a /path/to/audio --dry-run
+
+# Run with Shazam-only identification
+python3 cli.py -v /path/to/videos -a /path/to/audio --shazam-only --dry-run
+
+# Watch an upload folder (stop with Ctrl-C)
+python3 cli.py --monitor --monitor-interval 5
+
+# Desktop GUI
+python3 main.py
+
+# Web UI (stop the foreground process with Ctrl-C)
+./start_web.sh
+# or, after installing dependencies yourself:
+python3 web_backend.py
+```
+
+Useful maintenance commands are `python3 cli.py --history`, `--stats`, `--cache-stats`, `--index-stats`, `--reindex`, and `--clear-cache`. For a background web process, record its PID and stop that PID explicitly; do not use a broad `pkill python` command. `PORT` selects the starting port, while the server automatically chooses another available port.
+
+### Exposing the web UI safely
+
+The server binds to loopback unless `SHORTSSYNC_HOST` is set. A non-loopback bind is refused unless `SHORTSSYNC_TOKEN` is configured. Send that token using `X-Auth-Token` or `Authorization: Bearer ...`. Set `SHORTSSYNC_ROOTS` to an `os.pathsep`-separated filesystem allow-list and set `SHORTSSYNC_CORS_ORIGINS` for non-default browser origins. Keep the UI local when possible; this application can read, download, and rename files.
+
+### Development checks
+
+```bash
+python3 -m pytest -q
+python3 -m ruff check .
+python3 -m compileall -q .
+```
+
+The full test suite currently passes in the repository environment, with optional media/network cases skipped when their dependencies are unavailable. `find_unique.py` currently has an import compatibility issue (`compare_fingerprints` is not exported by `shortssync`), so validate that helper separately before relying on it.
 
 **New Features:** 🎵 Shazam Integration | 🎯 Shazam-Only CLI Mode | 🐌 Slowed Audio Support | 🧩 Modular Architecture
 
@@ -11,7 +66,7 @@ ShortsSync is a powerful automation platform that combines Chromaprint fingerpri
 ## 🎯 Features
 
 ### Core Features
-- **🎵 Chromaprint Audio Fingerprinting**: Industry-standard audio matching with 100% accuracy
+- **🎵 Chromaprint Audio Fingerprinting**: Industry-standard audio matching with strong results on clean, exact matches
 - **🎤 Shazam Integration**: FREE song identification with smart caching
 - **🎯 Shazam-Only CLI Mode**: Rename directly from Shazam without indexing the reference library first
 - **🌐 Web Interface**: Modern browser-based UI with real-time updates
@@ -359,7 +414,7 @@ ShortsSync now includes **FREE** Shazam integration via ShazamIO!
 - 🎵 **Automatic Song ID**: Identify songs in your reference library
 - 🎯 **Shazam-Only Renaming**: Skip reference indexing and rename videos directly from Shazam
 - 🧭 **Fallback Matching**: Use Shazam when fingerprint matching misses
-- 💾 **Smart Caching**: Results cached in `.shazam_cache/` 
+- 💾 **Smart Caching**: Results cached in `.shazam_cache/`
 - 🏷️ **Better Naming**: "Artist - Title" instead of filenames
 - 🆓 **Free**: No API key needed
 
@@ -608,7 +663,7 @@ python cli.py -a "/path/to/audio/slowed_versions/0.7x"
 - **Indexing**: ~1-2 seconds per audio file
 - **Matching**: ~2-3 seconds per video file
 - **Shazam ID**: ~1-2 seconds per song (cached after first)
-- **Accuracy**: 100% for exact audio matches
+- **Accuracy**: Depends on audio quality, clip length, and the configured matching threshold
 - **BER Threshold**: 0.15 (15% bit error rate)
 
 **Optimization Tips:**
