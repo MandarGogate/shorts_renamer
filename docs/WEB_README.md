@@ -56,9 +56,11 @@ The web interface provides full ShortsSync functionality through a modern, respo
    cd shorts_renamer
    ```
 
-2. **Install Python dependencies**
+2. **Create a virtual environment and install dependencies**
    ```bash
-   pip install -r requirements_web.txt
+   python3 -m venv .venv
+   source .venv/bin/activate
+   python -m pip install -r requirements_web.txt
    ```
 
 3. **Start the server**
@@ -67,7 +69,7 @@ The web interface provides full ShortsSync functionality through a modern, respo
    ./start_web.sh
 
    # Or manually
-   python3 web_backend.py
+   python web_backend.py
    ```
 
 4. **Open browser**
@@ -239,41 +241,21 @@ socket.on('status_update', (data) => {
 
 ---
 
-## 🔐 Remote Access
+## 🔐 Remote access
 
-### Local Network Access
+The server binds to `127.0.0.1` by default. Local use does not require a token. Do not expose it on a network without configuring authentication and filesystem limits.
 
-To access from other devices on your network:
+To access it from another device on your LAN:
 
-1. **Find server IP**
-   ```bash
-   # macOS/Linux
-   ifconfig | grep inet
+```bash
+SHORTSSYNC_HOST=0.0.0.0 \
+SHORTSSYNC_TOKEN=$(openssl rand -hex 16) \
+SHORTSSYNC_ROOTS="/Users/me/Movies/Shorts:/Users/me/Music/Shorts" \
+SHORTSSYNC_CORS_ORIGINS="http://192.168.1.50:5001" \
+./start_web.sh
+```
 
-   # Or
-   hostname -I
-   ```
-
-2. **Start server** (already binds to 0.0.0.0)
-   ```bash
-   ./start_web.sh
-   ```
-
-3. **Access from other device**
-   ```
-   http://192.168.1.XXX:5001
-   ```
-
-### Security Warning
-
-The web server does NOT have authentication by default.
-
-**For production use:**
-- Add authentication (OAuth, JWT, etc.)
-- Use HTTPS/SSL
-- Implement rate limiting
-- Add CORS restrictions
-- Use environment variables for secrets
+Use the Mac's LAN address in the browser. The token can be supplied in the UI with `?token=<secret>` or through the documented auth headers. `SHORTSSYNC_ROOTS` is an `os.pathsep`-separated allow-list, so use `:` on macOS and Linux. A non-loopback host without `SHORTSSYNC_TOKEN` is refused.
 
 ---
 

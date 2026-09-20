@@ -4,7 +4,7 @@ All notable ShortsSync implementation changes reconstructed from the Git history
 
 ## [Unreleased]
 
-- Documentation baseline added/updated for users and coding agents.
+- Added a clean macOS setup guide covering Homebrew, isolated Python installs, media-tool checks, configuration, and safe first runs.
 
 ## 2026-05-30
 

@@ -10,14 +10,20 @@ ShortsSync is a single-host automation tool that combines Chromaprint fingerprin
 
 ## Current setup and operations
 
+For a clean Mac setup, use the step-by-step [macOS setup guide](docs/MAC_SETUP.md). It covers Homebrew, a virtual environment, media tools, folder configuration, and verification.
+
 ### Install and configure
 
 ```bash
-python3 -m pip install -r requirements.txt
 # macOS
-brew install ffmpeg chromaprint
+brew install python ffmpeg chromaprint
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+
 # Debian/Ubuntu
 sudo apt install ffmpeg libchromaprint-tools
+python3 -m pip install -r requirements.txt
 ```
 
 Set `SHORTSSYNC_VIDEO_DIR` and `SHORTSSYNC_AUDIO_DIR`, or copy `config.example.py` to the ignored `config_local.py` and set `DEFAULT_SETTINGS`. Environment directory values take precedence over local config, which takes precedence over the committed defaults in `config.py`.
@@ -128,12 +134,14 @@ pip install shazamio
 pip install -r requirements.txt
 ```
 
-### Clone & Setup
+### Clone & setup
 
 ```bash
 git clone https://github.com/MandarGogate/shorts_renamer.git
 cd shorts_renamer
 ```
+
+On macOS, create and activate `.venv` before installing dependencies. The [macOS setup guide](docs/MAC_SETUP.md) has the complete command sequence.
 
 ---
 
